@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wheel of the Year</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap');
+
+:root {
+--bg: #f5f0e8; --paper: #faf7f2; --ink: #2c2416;
+--ink-light: #6b5e4a; --ink-faint: #c4b89a; --border: #ddd4c0;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); font-family: 'Crimson Pro', Georgia, serif; color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+header { text-align: center; padding: 1.5rem 1rem 0.3rem; }
+h1 { font-family: 'Cinzel', serif; font-size: clamp(1.1rem,2.5vw,1.8rem); font-weight: 600; letter-spacing: 0.15em; }
+.subtitle { font-size: .95rem; color: var(--ink-light); font-style: italic; margin-top: .15rem; }
+
+.search-row { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: center; padding: .7rem 1rem .2rem; }
+.search-input { font-family: 'Crimson Pro',serif; font-size: 1rem; background: var(--paper); border: 1px solid var(--ink-faint); color: var(--ink); padding: .35rem .7rem; border-radius: 2px; outline: none; width: 240px; }
+.search-input:focus { border-color: var(--ink-light); }
+.btn { font-family: 'Cinzel',serif; font-size: .7rem; letter-spacing: .08em; background: var(--ink); color: var(--paper); border: none; padding: .44rem .9rem; border-radius: 2px; cursor: pointer; transition: opacity .15s; white-space: nowrap; }
+.btn:hover { opacity: .8; } .btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-outline { background: transparent; color: var(--ink); border: 1px solid var(--ink-faint); }
+.btn-outline:hover { border-color: var(--ink-light); }
+
+.presets { display: flex; flex-wrap: wrap; gap: .3rem; justify-content: center; padding: .2rem 1rem .5rem; max-width: 720px; }
+.preset-btn { font-family: 'Crimson Pro',serif; font-size: .82rem; background: transparent; border: 1px solid var(--border); color: var(--ink-light); padding: .18rem .55rem; border-radius: 10px; cursor: pointer; transition: all .15s; }
+.preset-btn:hover,.preset-btn.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.main-row { display: flex; flex-direction: row; align-items: flex-start; justify-content: center; gap: 1.2rem; width: 100%; max-width: 1060px; padding: 0 .5rem; }
+.wheel-wrap { flex-shrink: 0; width: min(92vw,660px); height: min(92vw,660px); }
+canvas { width: 100%; height: 100%; display: block; }
+
+.controls-panel { flex-shrink: 0; width: 265px; background: var(--paper); border: 1px solid var(--border); border-radius: 3px; padding: .9rem; font-size: .88rem; display: flex; flex-direction: column; gap: .55rem; }
+.panel-title { font-family: 'Cinzel',serif; font-size: .65rem; letter-spacing: .12em; color: var(--ink-light); text-transform: uppercase; border-bottom: 1px solid var(--border); padding-bottom: .35rem; }
+.ring-row { display: flex; flex-direction: column; gap: .22rem; margin-bottom: .5rem;
+border: 1px solid transparent; border-radius: 3px; padding: .25rem .2rem; transition: background .15s; }
+.ring-row.drag-over { background: rgba(44,36,22,.06); border-color: var(--border); }
+.ring-row.dragging { opacity: .4; }
+.drag-handle { font-size: 1rem; color: var(--ink-faint); cursor: grab; flex-shrink: 0; line-height:1;
+padding: 0 2px; user-select:none; }
+.drag-handle:active { cursor: grabbing; }
+.reorder-btns { display:flex; gap:2px; flex-shrink:0; }
+.reorder-btn { font-size: .7rem; background: transparent; border: 1px solid var(--border);
+color: var(--ink-light); width: 18px; height: 18px; border-radius: 2px; cursor: pointer;
+display:flex; align-items:center; justify-content:center; padding:0; line-height:1; }
+.reorder-btn:hover:not([disabled]) { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.reorder-btn[disabled] { opacity: .25; cursor: not-allowed; }
+.ring-subcontrols { display: flex; flex-direction: column; gap: .22rem; transition: opacity .2s; }
+.ring-header { display: flex; align-items: center; gap: .4rem; }
+.ring-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.ring-name { flex: 1; font-size: .85rem; }
+.toggle { width: 28px; height: 15px; background: var(--border); border-radius: 8px; position: relative; cursor: pointer; border: none; outline: none; transition: background .2s; flex-shrink: 0; }
+.toggle.on { background: var(--ink); }
+.toggle::after { content:''; position: absolute; width: 11px; height: 11px; background: white; border-radius: 50%; top: 2px; left: 2px; transition: left .2s; }
+.toggle.on::after { left: 15px; }
+.slider-row { display: flex; align-items: center; gap: .4rem; padding-left: 1.3rem; }
+.slider-label { font-size: .7rem; color: var(--ink-light); width: 52px; flex-shrink: 0; }
+input[type=range] { -webkit-appearance: none; width: 100%; height: 3px; border-radius: 2px; background: var(--border); outline: none; cursor: pointer; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: var(--ink); cursor: pointer; }
+.slider-val { font-size: .7rem; color: var(--ink-light); width: 30px; text-align: right; flex-shrink: 0; }
+.color-row { display: flex; align-items: center; gap: .4rem; padding-left: 1.3rem; }
+.color-row label { font-size: .7rem; color: var(--ink-light); flex: 1; }
+input[type=color] { width: 26px; height: 18px; border: 1px solid var(--border); border-radius: 2px; padding: 1px; cursor: pointer; background: none; }
+.misc-row { display: flex; align-items: center; justify-content: space-between; }
+.misc-label { font-size: .82rem; color: var(--ink-light); }
+.divider { border: none; border-top: 1px solid var(--border); margin: .1rem 0; }
+
+.status { font-size: .74rem; color: var(--ink-light); text-align: center; min-height: 1.2em; padding: .2rem 1rem; font-style: italic; }
+.status.loading { color: #2471a3; } .status.error { color: #c0392b; } .status.ok { color: #27ae60; }
+
+.ndvi-progress { display: none; flex-direction: column; gap: .2rem; padding: .2rem 1rem; max-width: 680px; width: 100%; align-items: center; }
+.ndvi-progress.visible { display: flex; }
+.ndvi-bar-wrap { width: min(92vw,500px); height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.ndvi-bar { height: 100%; background: #27ae60; border-radius: 3px; transition: width .3s; width: 0%; }
+.ndvi-msg { font-size: .7rem; color: var(--ink-light); font-style: italic; }
+
+.legend { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; justify-content: center; padding: .3rem 1rem .5rem; max-width: 680px; }
+.legend-item { display: flex; align-items: center; gap: .35rem; font-size: .8rem; color: var(--ink-light); }
+.legend-swatch { width: 16px; height: 5px; border-radius: 3px; }
+
+.data-note { font-size: .7rem; color: var(--ink-faint); text-align: center; padding: 0 1rem 1.5rem; font-style: italic; max-width: 700px; line-height: 1.5; }
+.data-note a { color: var(--ink-faint); }
+
+.tooltip { position: fixed; background: var(--paper); border: 1px solid var(--ink-faint); padding: .4rem .7rem; font-size: .83rem; pointer-events: none; display: none; z-index: 100; border-radius: 2px; color: var(--ink); max-width: 200px; box-shadow: 2px 3px 12px rgba(0,0,0,.12); line-height: 1.6; }
+.spinner { display: none; width: 17px; height: 17px; border: 2px solid var(--border); border-top-color: var(--ink); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
+.spinner.on { display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 820px) {
+.main-row { flex-direction: column; align-items: center; }
+.controls-panel { width: min(92vw,660px); }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Wheel of the Year</h1>
+  <p class="subtitle">Climate &amp; Ecological Calendar</p>
+</header>
+
+<div class="search-row">
+  <input class="search-input" id="cityInput" type="text" placeholder="Enter any city worldwide…" value="Oakland, California" />
+  <div class="spinner" id="spinner"></div>
+  <button class="btn" id="fetchBtn" onclick="fetchCity()">Load Live Data</button>
+</div>
+
+<div class="status ok" id="status">Built-in data loaded. Enter any city and click Load for live data including real MODIS NDVI.</div>
+
+<div class="ndvi-progress" id="ndviProgress">
+  <div class="ndvi-bar-wrap"><div class="ndvi-bar" id="ndviBar"></div></div>
+  <div class="ndvi-msg" id="ndviMsg">Fetching MODIS NDVI satellite data…</div>
+</div>
+
+<div class="main-row">
+  <div class="wheel-wrap"><canvas id="wheel"></canvas></div>
+  <div class="controls-panel">
+    <div class="panel-title">Ring Controls</div>
+    <div id="ringControls"></div>
+    <hr class="divider">
+    <div class="panel-title">Display Options</div>
+    <div class="misc-row"><span class="misc-label">Moon phases</span><button class="toggle on" onclick="toggleDisplay(this,'moon')"></button></div>
+    <div class="misc-row"><span class="misc-label">Solstice / equinox axes</span><button class="toggle on" onclick="toggleDisplay(this,'axis')"></button></div>
+    <div class="misc-row"><span class="misc-label">Month tick labels</span><button class="toggle on" onclick="toggleDisplay(this,'ticks')"></button></div>
+    <div class="misc-row"><span class="misc-label">Actuals overlay</span><button class="toggle on" id="actualsToggle" onclick="toggleDisplay(this,'actuals')"></button></div>
+    <hr class="divider">
+    <button class="btn btn-outline" style="width:100%;margin-top:.2rem" onclick="exportPNG()">⬇ Export PNG</button>
+  </div>
+</div>
+
+<div class="legend" id="legendEl"></div>
+<p class="data-note">
+  Ring width = normalized daily value (wider arc = higher). Hover anywhere for daily values — or monthly for built-in presets.<br>
+  Filled area = 30-year ERA5 climate normals. <strong>Solid line</strong> = actuals (past 6 months, temp &amp; rain via <a href="https://open-meteo.com" target="_blank">Open-Meteo</a>, vegetation via <a href="https://modis.ornl.gov" target="_blank">MODIS</a>).<br>
+  Geocoding via <a href="https://nominatim.openstreetmap.org" target="_blank">OpenStreetMap</a>
+</p>
+<div class="tooltip" id="tooltip"></div>
+<script>
+// ════════════════════════════════════════════════════════
+//  RING DEFINITIONS
+// ════════════════════════════════════════════════════════
+const RING_DEFS = [
+  { id:'temp',     label:'Temperature', unit:'\u00b0F',   color:'#c0392b', normLo:20,   normHi:100  },
+  { id:'rain',     label:'Rainfall',    unit:'in',   color:'#2471a3', normLo:0,    normHi:10   },
+  { id:'daylight', label:'Daylight',    unit:'hrs',  color:'#c8980a', normLo:7,    normHi:18   },
+  { id:'ndvi',     label:'Vegetation',  unit:'NDVI', color:'#27ae60', normLo:.03,  normHi:.80  },
+  { id:'wind',     label:'Wind',        unit:'mph',  color:'#7f8c8d', normLo:3,    normHi:16   },
+];
+
+let ringOrder = ['temp','rain','daylight','ndvi','wind'];
+
+const ringState = {};
+RING_DEFS.forEach(r => { ringState[r.id] = { visible:true, color:r.color, thickness:1.0, opacity:.82 }; });
+let displayState = { moon:true, axis:true, ticks:true, actuals:true };
+
+const RING_GAP   = 0.010;
+const RING_START = 0.075;
+const RING_END   = 0.415;
+const BASE_THICK = 0.058;
+
+function computeRingLayouts() {
+  const visible = ringOrder.filter(id => ringState[id].visible);
+  const total = visible.length;
+  if(total === 0) return {};
+  const totalSpace = RING_END - RING_START - RING_GAP * (total - 1);
+  const baseThick = totalSpace / total;
+  let cursor = RING_START;
+  const layouts = {};
+  ringOrder.forEach(id => {
+    if(!ringState[id].visible) return;
+    const s = ringState[id];
+    const thick = baseThick * s.thickness;
+    layouts[id] = { innerFrac: cursor, thickFrac: Math.min(thick, RING_END - cursor) };
+    cursor += thick + RING_GAP;
+  });
+  return layouts;
+}
+
+// ════════════════════════════════════════════════════════
+//  PRESET DATA  (built-in fallback)
+// ════════════════════════════════════════════════════════
+const OAKLAND = { label:'Oakland', city:'Oakland, California', data:{ name:'Oakland, California', lat:37.8, lon:-122.2, resolution:'daily (interpolated)',
+      temp:[50.5,50.449,50.399,50.35,50.303,50.257,50.214,50.174,50.138,50.105,50.076,50.051,50.031,50.016,50.006,50.001,50.002,50.019,50.053,50.103,50.169,50.25,50.345,50.454,50.574,50.704,50.844,50.991,51.144,51.301,51.46,51.62,51.778,51.933,52.083,52.227,52.362,52.488,52.602,52.704,52.792,52.866,52.924,52.966,52.992,53.0,53.006,53.023,53.051,53.089,53.138,53.197,53.265,53.341,53.425,53.515,53.611,53.711,53.815,53.92,54.027,54.133,54.237,54.339,54.437,54.53,54.618,54.698,54.77,54.833,54.887,54.931,54.965,54.987,54.999,55.002,55.018,55.049,55.096,55.158,55.234,55.324,55.426,55.539,55.663,55.795,55.935,56.081,56.231,56.384,56.539,56.693,56.845,56.993,57.136,57.272,57.4,57.519,57.627,57.723,57.805,57.874,57.929,57.968,57.992,58.0,58.011,58.042,58.095,58.167,58.259,58.37,58.498,58.641,58.8,58.97,59.152,59.343,59.541,59.743,59.949,60.154,60.359,60.559,60.753,60.94,61.116,61.281,61.432,61.568,61.688,61.789,61.871,61.934,61.976,61.997,62.002,62.018,62.049,62.096,62.158,62.234,62.324,62.426,62.539,62.663,62.795,62.935,63.081,63.231,63.384,63.539,63.693,63.845,63.993,64.136,64.272,64.4,64.519,64.627,64.723,64.805,64.874,64.929,64.968,64.992,65.0,65.003,65.011,65.024,65.042,65.065,65.092,65.124,65.16,65.2,65.243,65.288,65.336,65.385,65.436,65.487,65.539,65.59,65.64,65.688,65.735,65.779,65.82,65.858,65.892,65.922,65.947,65.968,65.984,65.994,65.999,66.001,66.006,66.016,66.031,66.051,66.076,66.105,66.138,66.174,66.214,66.257,66.303,66.35,66.399,66.449,66.5,66.551,66.601,66.65,66.697,66.743,66.786,66.826,66.862,66.895,66.924,66.949,66.969,66.984,66.994,66.999,66.999,66.988,66.967,66.936,66.894,66.844,66.784,66.716,66.641,66.558,66.47,66.377,66.279,66.179,66.077,65.974,65.872,65.77,65.671,65.576,65.485,65.4,65.321,65.249,65.185,65.13,65.084,65.047,65.021,65.005,65.0,64.992,64.968,64.929,64.874,64.805,64.723,64.627,64.519,64.4,64.272,64.136,63.993,63.845,63.693,63.539,63.384,63.231,63.081,62.935,62.795,62.663,62.539,62.426,62.324,62.234,62.158,62.096,62.049,62.018,62.002,61.996,61.964,61.901,61.807,61.683,61.531,61.352,61.148,60.922,60.675,60.41,60.13,59.838,59.538,59.232,58.923,58.615,58.311,58.014,57.728,57.456,57.199,56.962,56.747,56.555,56.389,56.251,56.142,56.063,56.016,56.0,55.987,55.947,55.882,55.791,55.676,55.538,55.378,55.198,55.001,54.787,54.56,54.321,54.074,53.821,53.564,53.307,53.052,52.801,52.558,52.325,52.104,51.899,51.71,51.54,51.391,51.264,51.161,51.082,51.03,51.003,50.999,50.994,50.984,50.969,50.949,50.924,50.895,50.862,50.826,50.786,50.743,50.697,50.65,50.601,50.551],
+      rain:[3.55,3.525,3.5,3.475,3.451,3.429,3.407,3.387,3.369,3.352,3.338,3.326,3.316,3.308,3.303,3.3,3.3,3.301,3.304,3.307,3.311,3.317,3.323,3.33,3.338,3.347,3.356,3.366,3.376,3.387,3.397,3.408,3.419,3.429,3.439,3.448,3.457,3.466,3.473,3.48,3.486,3.491,3.495,3.498,3.499,3.5,3.498,3.492,3.482,3.469,3.452,3.431,3.407,3.38,3.351,3.32,3.286,3.251,3.215,3.178,3.141,3.104,3.067,3.031,2.997,2.964,2.934,2.906,2.881,2.858,2.839,2.824,2.812,2.804,2.8,2.799,2.79,2.772,2.745,2.71,2.667,2.617,2.559,2.495,2.425,2.349,2.27,2.188,2.102,2.016,1.928,1.841,1.755,1.671,1.59,1.512,1.44,1.373,1.312,1.257,1.21,1.171,1.14,1.118,1.105,1.1,1.099,1.095,1.088,1.079,1.068,1.054,1.038,1.02,1.0,0.979,0.956,0.932,0.907,0.882,0.856,0.831,0.805,0.78,0.756,0.733,0.71,0.69,0.671,0.654,0.639,0.626,0.616,0.608,0.603,0.6,0.6,0.597,0.592,0.584,0.574,0.561,0.546,0.529,0.51,0.49,0.467,0.444,0.42,0.395,0.369,0.344,0.318,0.293,0.268,0.244,0.221,0.2,0.18,0.162,0.146,0.132,0.121,0.112,0.105,0.101,0.1,0.1,0.099,0.098,0.096,0.094,0.091,0.088,0.084,0.08,0.076,0.071,0.066,0.061,0.056,0.051,0.046,0.041,0.036,0.031,0.027,0.022,0.018,0.014,0.011,0.008,0.005,0.003,0.002,0.001,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.001,0.003,0.006,0.011,0.016,0.022,0.028,0.036,0.044,0.053,0.062,0.072,0.082,0.092,0.103,0.113,0.123,0.133,0.142,0.151,0.16,0.168,0.175,0.182,0.187,0.192,0.195,0.198,0.199,0.2,0.202,0.208,0.219,0.233,0.252,0.274,0.3,0.328,0.36,0.394,0.43,0.469,0.508,0.549,0.59,0.631,0.672,0.712,0.751,0.788,0.823,0.856,0.886,0.914,0.938,0.958,0.974,0.987,0.995,0.999,1.001,1.007,1.018,1.035,1.058,1.086,1.119,1.156,1.198,1.243,1.292,1.343,1.396,1.451,1.508,1.564,1.621,1.676,1.731,1.783,1.833,1.88,1.924,1.963,1.998,2.029,2.054,2.074,2.088,2.097,2.1,2.105,2.118,2.14,2.171,2.21,2.257,2.312,2.373,2.44,2.512,2.59,2.671,2.755,2.841,2.928,3.016,3.102,3.188,3.27,3.349,3.425,3.495,3.559,3.617,3.667,3.71,3.745,3.772,3.79,3.799,3.8,3.797,3.792,3.784,3.774,3.762,3.748,3.731,3.713,3.693,3.671,3.649,3.625,3.6,3.575],
+      daylight:[9.44,9.45,9.46,9.47,9.48,9.5,9.51,9.53,9.54,9.56,9.58,9.6,9.62,9.64,9.66,9.68,9.7,9.72,9.75,9.77,9.8,9.82,9.85,9.88,9.9,9.93,9.96,9.99,10.02,10.05,10.08,10.11,10.14,10.17,10.21,10.24,10.27,10.31,10.34,10.38,10.41,10.45,10.48,10.52,10.56,10.59,10.63,10.67,10.7,10.74,10.78,10.82,10.86,10.9,10.94,10.98,11.01,11.05,11.09,11.13,11.17,11.21,11.26,11.3,11.34,11.38,11.42,11.46,11.5,11.54,11.58,11.63,11.67,11.71,11.75,11.79,11.83,11.87,11.92,11.96,12.0,12.04,12.08,12.13,12.17,12.21,12.25,12.29,12.33,12.37,12.42,12.46,12.5,12.54,12.58,12.62,12.66,12.7,12.74,12.79,12.83,12.87,12.91,12.95,12.99,13.02,13.06,13.1,13.14,13.18,13.22,13.26,13.3,13.33,13.37,13.41,13.44,13.48,13.52,13.55,13.59,13.62,13.66,13.69,13.73,13.76,13.79,13.83,13.86,13.89,13.92,13.95,13.98,14.01,14.04,14.07,14.1,14.12,14.15,14.18,14.2,14.23,14.25,14.28,14.3,14.32,14.34,14.36,14.38,14.4,14.42,14.44,14.46,14.47,14.49,14.5,14.52,14.53,14.54,14.55,14.56,14.57,14.58,14.59,14.6,14.6,14.61,14.61,14.62,14.62,14.62,14.62,14.62,14.62,14.62,14.62,14.61,14.61,14.6,14.59,14.59,14.58,14.57,14.56,14.55,14.54,14.52,14.51,14.5,14.48,14.47,14.45,14.43,14.41,14.39,14.37,14.35,14.33,14.31,14.29,14.26,14.24,14.22,14.19,14.16,14.14,14.11,14.08,14.05,14.03,14.0,13.97,13.94,13.91,13.87,13.84,13.81,13.78,13.74,13.71,13.68,13.64,13.61,13.57,13.53,13.5,13.46,13.43,13.39,13.35,13.31,13.28,13.24,13.2,13.16,13.12,13.08,13.04,13.01,12.97,12.93,12.89,12.85,12.81,12.76,12.72,12.68,12.64,12.6,12.56,12.52,12.48,12.44,12.4,12.35,12.31,12.27,12.23,12.19,12.15,12.1,12.06,12.02,11.98,11.94,11.9,11.85,11.81,11.77,11.73,11.69,11.65,11.6,11.56,11.52,11.48,11.44,11.4,11.36,11.32,11.28,11.24,11.19,11.15,11.11,11.07,11.03,10.99,10.96,10.92,10.88,10.84,10.8,10.76,10.72,10.69,10.65,10.61,10.57,10.54,10.5,10.47,10.43,10.39,10.36,10.32,10.29,10.26,10.22,10.19,10.16,10.13,10.09,10.06,10.03,10.0,9.97,9.95,9.92,9.89,9.86,9.84,9.81,9.78,9.76,9.74,9.71,9.69,9.67,9.65,9.63,9.61,9.59,9.57,9.55,9.53,9.52,9.5,9.49,9.48,9.46,9.45,9.44,9.43,9.42,9.41,9.41,9.4,9.39,9.39,9.38,9.38,9.38,9.38,9.38,9.38,9.38,9.38,9.39,9.39,9.4,9.4,9.41,9.42,9.43],
+      ndvi:[0.38,0.381,0.382,0.383,0.384,0.385,0.386,0.387,0.387,0.388,0.388,0.389,0.389,0.39,0.39,0.39,0.39,0.39,0.391,0.391,0.392,0.393,0.393,0.395,0.396,0.397,0.398,0.4,0.401,0.403,0.405,0.406,0.408,0.409,0.411,0.412,0.414,0.415,0.416,0.417,0.418,0.419,0.419,0.42,0.42,0.42,0.42,0.42,0.421,0.422,0.423,0.424,0.425,0.427,0.429,0.43,0.432,0.434,0.436,0.438,0.441,0.443,0.445,0.447,0.449,0.451,0.452,0.454,0.455,0.457,0.458,0.459,0.459,0.46,0.46,0.46,0.46,0.46,0.459,0.458,0.458,0.457,0.456,0.455,0.453,0.452,0.451,0.449,0.448,0.446,0.445,0.443,0.442,0.44,0.439,0.437,0.436,0.435,0.434,0.433,0.432,0.431,0.431,0.43,0.43,0.43,0.43,0.429,0.429,0.428,0.427,0.425,0.424,0.422,0.42,0.418,0.416,0.413,0.411,0.408,0.406,0.403,0.401,0.398,0.396,0.393,0.391,0.389,0.387,0.385,0.384,0.383,0.382,0.381,0.38,0.38,0.38,0.38,0.379,0.377,0.376,0.374,0.371,0.369,0.366,0.362,0.359,0.355,0.351,0.347,0.343,0.339,0.335,0.331,0.327,0.323,0.319,0.316,0.313,0.31,0.307,0.305,0.303,0.302,0.301,0.3,0.3,0.3,0.299,0.298,0.297,0.295,0.293,0.29,0.287,0.284,0.281,0.277,0.273,0.269,0.265,0.261,0.257,0.253,0.249,0.245,0.241,0.238,0.234,0.231,0.229,0.226,0.224,0.223,0.221,0.22,0.22,0.22,0.22,0.22,0.219,0.218,0.218,0.217,0.216,0.215,0.214,0.212,0.211,0.209,0.208,0.207,0.205,0.203,0.202,0.201,0.199,0.198,0.196,0.195,0.194,0.193,0.192,0.192,0.191,0.19,0.19,0.19,0.19,0.19,0.19,0.19,0.191,0.191,0.191,0.191,0.192,0.192,0.193,0.193,0.194,0.194,0.195,0.195,0.196,0.196,0.197,0.197,0.198,0.198,0.198,0.199,0.199,0.199,0.2,0.2,0.2,0.2,0.2,0.2,0.201,0.201,0.203,0.204,0.206,0.207,0.21,0.212,0.215,0.217,0.22,0.223,0.226,0.229,0.232,0.235,0.238,0.241,0.244,0.247,0.249,0.251,0.254,0.255,0.257,0.258,0.259,0.26,0.26,0.26,0.26,0.261,0.262,0.264,0.265,0.268,0.27,0.273,0.275,0.279,0.282,0.285,0.289,0.292,0.296,0.299,0.303,0.306,0.31,0.313,0.316,0.319,0.321,0.324,0.325,0.327,0.328,0.329,0.33,0.33,0.33,0.33,0.331,0.332,0.333,0.334,0.335,0.336,0.338,0.34,0.342,0.343,0.345,0.347,0.349,0.352,0.354,0.356,0.358,0.359,0.361,0.363,0.364,0.366,0.367,0.368,0.369,0.369,0.37,0.37,0.37,0.37,0.37,0.371,0.371,0.372,0.372,0.373,0.373,0.374,0.375,0.376,0.377,0.378,0.379],
+      wind:[6.75,6.775,6.8,6.825,6.849,6.871,6.893,6.913,6.931,6.948,6.962,6.974,6.984,6.992,6.997,7.0,7.001,7.006,7.018,7.034,7.056,7.083,7.115,7.151,7.191,7.235,7.281,7.33,7.381,7.434,7.487,7.54,7.593,7.644,7.694,7.742,7.787,7.829,7.867,7.901,7.931,7.955,7.975,7.989,7.997,8.0,8.003,8.011,8.025,8.045,8.069,8.099,8.133,8.171,8.213,8.258,8.306,8.356,8.407,8.46,8.513,8.566,8.619,8.67,8.719,8.765,8.809,8.849,8.885,8.917,8.944,8.966,8.982,8.994,8.999,9.001,9.006,9.016,9.032,9.053,9.078,9.108,9.142,9.18,9.221,9.265,9.312,9.36,9.41,9.461,9.513,9.564,9.615,9.664,9.712,9.757,9.8,9.84,9.876,9.908,9.935,9.958,9.976,9.989,9.997,10.0,10.003,10.011,10.024,10.042,10.065,10.092,10.124,10.16,10.2,10.243,10.288,10.336,10.385,10.436,10.487,10.539,10.59,10.64,10.688,10.735,10.779,10.82,10.858,10.892,10.922,10.947,10.968,10.984,10.994,10.999,10.999,10.994,10.984,10.968,10.947,10.922,10.892,10.858,10.82,10.779,10.735,10.688,10.64,10.59,10.539,10.487,10.436,10.385,10.336,10.288,10.243,10.2,10.16,10.124,10.092,10.065,10.042,10.024,10.011,10.003,10.0,9.997,9.989,9.976,9.958,9.935,9.908,9.876,9.84,9.8,9.757,9.712,9.664,9.615,9.564,9.513,9.461,9.41,9.36,9.312,9.265,9.221,9.18,9.142,9.108,9.078,9.053,9.032,9.016,9.006,9.001,8.999,8.994,8.984,8.969,8.949,8.924,8.895,8.862,8.826,8.786,8.743,8.697,8.65,8.601,8.551,8.5,8.449,8.399,8.35,8.303,8.257,8.214,8.174,8.138,8.105,8.076,8.051,8.031,8.016,8.006,8.001,7.999,7.994,7.984,7.968,7.947,7.922,7.892,7.858,7.82,7.779,7.735,7.688,7.64,7.59,7.539,7.487,7.436,7.385,7.336,7.288,7.243,7.2,7.16,7.124,7.092,7.065,7.042,7.024,7.011,7.003,7.0,6.996,6.984,6.964,6.937,6.903,6.861,6.813,6.759,6.7,6.636,6.568,6.496,6.422,6.346,6.269,6.192,6.116,6.04,5.967,5.898,5.831,5.77,5.713,5.662,5.617,5.579,5.548,5.525,5.509,5.501,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.5,5.503,5.511,5.524,5.542,5.565,5.592,5.624,5.66,5.7,5.743,5.788,5.836,5.885,5.936,5.987,6.039,6.09,6.14,6.188,6.235,6.279,6.32,6.358,6.392,6.422,6.447,6.468,6.484,6.494,6.499,6.5,6.503,6.508,6.516,6.526,6.538,6.552,6.569,6.587,6.607,6.629,6.651,6.675,6.7,6.725] }};
+const PRESETS = [OAKLAND];
+
+let currentData = PRESETS[0].data;
+let activePreset = 'Oakland';
+
+// ════════════════════════════════════════════════════════
+//  CANVAS
+// ════════════════════════════════════════════════════════
+let canvas, ctx, W, H, CX, CY;
+const DIM = [31,28,31,30,31,30,31,31,30,31,30,31];
+const MON_S = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MON_L = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MOON_FULL=[26,55,85,112,142,170,202,231,259,288,316,345];
+const MOON_NEW=[11,40,71,100,130,158,187,216,245,274,302,331];
+
+function lerp(a,b,t){return a+(b-a)*t;}
+const SOLSTICE_OFFSET = -Math.PI/2 - (355/365)*Math.PI*2;
+function doy2angle(d){return(d/365)*Math.PI*2 + SOLSTICE_OFFSET;}
+function polar(a,r){return[CX+Math.cos(a)*r,CY+Math.sin(a)*r];}
+function norm(v,lo,hi){return Math.max(.02,Math.min(1,(v-lo)/(hi-lo)));}
+
+function drawRing(data,lo,hi,innerR,maxThick,color,alpha){
+  ctx.save();ctx.globalAlpha=alpha;
+  for(let d=0;d<365;d++){
+    const a1=doy2angle(d),a2=doy2angle(d+1);
+    const v=data[d];
+    const outerR=innerR+norm(v,lo,hi)*maxThick;
+    ctx.beginPath();ctx.arc(CX,CY,outerR,a1,a2);ctx.arc(CX,CY,innerR,a2,a1,true);
+    ctx.closePath();ctx.fillStyle=color;ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawMoon(){
+  const r=W*.430,dr=W*.009;
+  ctx.save();
+  MOON_FULL.forEach(d=>{const a=doy2angle(d);const[x,y]=polar(a,r);ctx.beginPath();ctx.arc(x,y,dr,0,Math.PI*2);ctx.fillStyle='#8e7cc3';ctx.globalAlpha=.85;ctx.fill();});
+  MOON_NEW.forEach(d=>{const a=doy2angle(d);const[x,y]=polar(a,r);ctx.beginPath();ctx.arc(x,y,dr*.65,0,Math.PI*2);ctx.strokeStyle='#8e7cc3';ctx.lineWidth=1.2;ctx.globalAlpha=.6;ctx.stroke();});
+  ctx.restore();
+}
+
+function drawTicks(){
+  const tr=W*.444,lr=W*.463;
+  ctx.save();ctx.strokeStyle='#b0a090';ctx.lineWidth=1;ctx.globalAlpha=.55;
+  let doy=0;
+  MON_S.forEach((m,i)=>{
+    const a=doy2angle(doy);
+    const[x1,y1]=polar(a,tr-W*.012);const[x2,y2]=polar(a,tr);
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    const ma=doy2angle(doy+DIM[i]/2);const[lx,ly]=polar(ma,lr);
+    ctx.save();ctx.globalAlpha=.85;ctx.font=`${W*.021}px Cinzel,serif`;ctx.fillStyle='#6b5e4a';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.translate(lx,ly);ctx.rotate(ma+Math.PI/2);ctx.fillText(m,0,0);ctx.restore();
+    doy+=DIM[i];
+  });
+  ctx.restore();
+}
+
+function drawAxes(){
+  ctx.save();ctx.strokeStyle='#2c2416';ctx.lineWidth=.8;ctx.globalAlpha=.28;ctx.setLineDash([3,4]);
+  const R=W*.485;
+  [[172,355],[79,265]].forEach(([a,b])=>{
+    const[ax,ay]=polar(doy2angle(a),R);const[bx,by]=polar(doy2angle(b),R);
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();
+  });
+  ctx.setLineDash([]);ctx.restore();
+  ctx.save();ctx.font=`italic ${W*.019}px 'Crimson Pro',serif`;ctx.fillStyle='#2c2416';ctx.globalAlpha=.48;ctx.textAlign='center';
+  const ld=R+W*.038;
+  [{doy:172,t:'Summer\nSolstice'},{doy:355,t:'Winter\nSolstice'},{doy:79,t:'Spring\nEquinox'},{doy:265,t:'Autumn\nEquinox'}]
+  .forEach(({doy,t})=>{
+    const[lx,ly]=polar(doy2angle(doy),ld);
+    t.split('\n').forEach((line,li,arr)=>ctx.fillText(line,lx,ly+(li-(arr.length-1)/2)*W*.021));
+  });
+  ctx.restore();
+}
+
+function drawCenter(){
+  ctx.save();ctx.textAlign='center';ctx.fillStyle='#2c2416';
+  const parts=currentData.name.split(', ');
+  ctx.font=`600 ${W*.026}px Cinzel,serif`;ctx.globalAlpha=.82;
+  ctx.fillText(parts[0],CX,CY-W*.027);
+  if(parts[1]){ctx.font=`italic ${W*.020}px 'Crimson Pro',serif`;ctx.globalAlpha=.50;ctx.fillText(parts[1],CX,CY+W*.016);}
+  if(currentData.ndviSource){
+    ctx.font=`italic ${W*.014}px 'Crimson Pro',serif`;ctx.globalAlpha=.35;
+    ctx.fillText('NDVI: '+currentData.ndviSource,CX,CY+W*.044);
+  }
+  if(actuals){
+    const tLen=actuals.temp?.length??0;
+    const rLen=actuals.rain?.length??0;
+    ctx.font=`italic ${W*.013}px 'Crimson Pro',serif`;ctx.globalAlpha=.50;
+    ctx.fillStyle='#27ae60';
+    ctx.fillText(`actuals: ${tLen}d temp · ${rLen}d rain · today=DOY${todayDOY}`,CX,CY+W*.062);
+  }
+  ctx.restore();
+}
+
+const RING_LABELS = {
+  temp:     { fmt: v => `${Math.round(v)}°F`,       maxWord:'hottest', minWord:'coldest' },
+  rain:     { fmt: v => `${v.toFixed(1)}"`,          maxWord:'wettest', minWord:'driest'  },
+  daylight: { fmt: v => `${v.toFixed(1)}h`,          maxWord:'longest', minWord:'shortest'},
+  ndvi:     { fmt: v => `NDVI ${v.toFixed(2)}`,      maxWord:'greenest',minWord:'brownest'},
+  wind:     { fmt: v => `${v.toFixed(1)} mph`,       maxWord:'windiest',minWord:'calmest' },
+};
+
+function drawMinMaxMarkers(layouts){
+  RING_DEFS.forEach(r=>{
+    const s=ringState[r.id];
+    if(!s.visible||!layouts[r.id]) return;
+    const data=currentData[r.id];
+    const {innerFrac,thickFrac}=layouts[r.id];
+    const innerR=innerFrac*W;
+    const maxThick=thickFrac*W;
+    const cfg=RING_LABELS[r.id];
+    let maxD=0,minD=0;
+    data.forEach((v,i)=>{ if(v>data[maxD])maxD=i; if(v<data[minD])minD=i; });
+    [[maxD,'max'],[minD,'min']].forEach(([dayIdx,type])=>{
+      const val=data[dayIdx];
+      const nVal=norm(val,r.normLo,r.normHi);
+      const peakR=innerR+nVal*maxThick;
+      const doy=dayIdx+0.5;
+      const angle=doy2angle(doy);
+      const tickInner=peakR+W*.004;
+      const tickOuter=peakR+W*.018;
+      const[x1,y1]=polar(angle,tickInner);
+      const[x2,y2]=polar(angle,tickOuter);
+      ctx.save();
+      ctx.strokeStyle=s.color;ctx.lineWidth=1.5;ctx.globalAlpha=0.9;
+      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+      const[dx,dy]=polar(angle,tickOuter+W*.006);
+      ctx.fillStyle=s.color;ctx.globalAlpha=1.0;
+      ctx.beginPath();ctx.arc(dx,dy,W*.005,0,Math.PI*2);ctx.fill();
+      const labelR=tickOuter+W*.032;
+      const[lx,ly]=polar(angle,labelR);
+      const word=type==='max'?cfg.maxWord:cfg.minWord;
+      const valStr=cfg.fmt(val);
+      ctx.save();
+      ctx.translate(lx,ly);
+      let rot=angle+Math.PI/2;
+      let normRot=((rot%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+      if(normRot>Math.PI/2 && normRot<Math.PI*3/2) rot+=Math.PI;
+      ctx.rotate(rot);
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      const fs=W*.016;
+      ctx.font=`italic ${fs}px 'Crimson Pro',serif`;
+      ctx.fillStyle=s.color;ctx.globalAlpha=0.75;
+      ctx.fillText(word,0,-fs*.7);
+      ctx.font=`600 ${fs}px Cinzel,serif`;ctx.globalAlpha=0.90;
+      ctx.fillText(valStr,0,fs*.75);
+      ctx.restore();ctx.restore();
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  ACTUALS OVERLAY
+// ════════════════════════════════════════════════════════
+let actuals = null;
+let todayDOY = null;
+
+function calendarDOY(dateStr) {
+  const [yr,mo,dy] = dateStr.split('-').map(Number);
+  const dim = [31,28,31,30,31,30,31,31,30,31,30,31];
+  let doy = 0;
+  for(let m=0;m<mo-1;m++) doy+=dim[m];
+  doy += dy-1;
+  return Math.min(doy, 364);
+}
+
+function smoothEntries(entries, winDays=7) {
+  return entries.map((e,i)=>{
+    let sum=0, cnt=0;
+    for(let j=0;j<entries.length;j++){
+      const dist = Math.abs(entries[j].doy - e.doy);
+      const wrapDist = 365 - dist;
+      const d = Math.min(dist, wrapDist);
+      if(d<=winDays){ sum+=entries[j].value; cnt++; }
+    }
+    return { doy:e.doy, value:cnt>0?sum/cnt:e.value };
+  });
+}
+
+function drawActualsLine(ringDef, entries, layout) {
+  if(!entries||!entries.length||!layout) return;
+  const s = ringState[ringDef.id];
+  if(!s.visible) return;
+  const innerR = layout.innerFrac * W;
+  const maxThick = layout.thickFrac * W;
+  const smoothed = smoothEntries(entries, 5);
+  ctx.save();
+  ctx.strokeStyle = s.color;ctx.lineWidth = W * 0.007;ctx.globalAlpha = 1.0;
+  ctx.lineCap = 'round';ctx.lineJoin = 'round';ctx.beginPath();
+  smoothed.forEach((e, i) => {
+    const r = innerR + norm(e.value, ringDef.normLo, ringDef.normHi) * maxThick;
+    const angle = doy2angle(e.doy + 0.5);
+    const [x,y] = polar(angle, r);
+    if(i===0) ctx.moveTo(x,y);
+    else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  [smoothed[0], smoothed[smoothed.length-1]].forEach(e=>{
+    const r = innerR + norm(e.value, ringDef.normLo, ringDef.normHi) * maxThick;
+    const angle = doy2angle(e.doy + 0.5);
+    const [x,y] = polar(angle, r);
+    ctx.beginPath(); ctx.arc(x,y,W*0.005,0,Math.PI*2);
+    ctx.fillStyle=s.color; ctx.globalAlpha=1; ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawTodayDot(layouts) {
+  if(todayDOY === null) return;
+  const angle = doy2angle(todayDOY + 0.5);
+  const ringsWithActuals = ['temp','rain','ndvi'];
+  let outerR = 0;
+  ringsWithActuals.forEach(id=>{
+    const r = RING_DEFS.find(r=>r.id===id);
+    if(!r||!ringState[id].visible||!layouts[id]) return;
+    const entries = actuals?.[id];
+    if(!entries||!entries.length) return;
+    const entry = entries.reduce((best,e)=>
+      Math.abs(e.doy-todayDOY)<Math.abs(best.doy-todayDOY)?e:best, entries[0]);
+    const rr = layouts[id].innerFrac*W + norm(entry.value,r.normLo,r.normHi)*layouts[id].thickFrac*W;
+    if(rr>outerR) outerR=rr;
+  });
+  if(outerR===0) return;
+  const dotR = outerR + W*0.014;
+  const [x,y] = polar(angle, dotR);
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x,y,W*0.011,0,Math.PI*2);
+  ctx.fillStyle='#faf7f2'; ctx.globalAlpha=0.92; ctx.fill();
+  ctx.beginPath(); ctx.arc(x,y,W*0.007,0,Math.PI*2);
+  ctx.fillStyle='#2c2416'; ctx.globalAlpha=1; ctx.fill();
+  const labelR = dotR + W*0.024;
+  const [lx,ly] = polar(angle, labelR);
+  ctx.save();
+  ctx.translate(lx,ly);
+  let rot = angle + Math.PI/2;
+  const nr = ((rot%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+  if(nr>Math.PI/2&&nr<Math.PI*3/2) rot+=Math.PI;
+  ctx.rotate(rot);
+  ctx.font=`italic ${W*.016}px 'Crimson Pro',serif`;
+  ctx.fillStyle='#2c2416'; ctx.globalAlpha=0.65;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('today',0,0);
+  ctx.restore();ctx.restore();
+}
+
+function draw(){
+  const layouts = computeRingLayouts();
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#faf7f2';ctx.fillRect(0,0,W,H);
+  ringOrder.forEach(id=>{
+    const r=RING_DEFS.find(r=>r.id===id);
+    const s=ringState[id]; if(!s.visible||!layouts[id]) return;
+    const {innerFrac,thickFrac}=layouts[id];
+    drawRing(currentData[id],r.normLo,r.normHi,innerFrac*W,thickFrac*W,s.color,s.opacity);
+  });
+  ctx.save();
+  ctx.beginPath();ctx.arc(CX,CY,W*.425,0,Math.PI*2);ctx.strokeStyle='#b0a090';ctx.lineWidth=1;ctx.globalAlpha=.3;ctx.stroke();
+  ctx.beginPath();ctx.arc(CX,CY,W*.442,0,Math.PI*2);ctx.lineWidth=.5;ctx.globalAlpha=.18;ctx.stroke();
+  ctx.restore();
+  if(actuals && displayState.actuals){
+    const overlayRings = ['temp','rain','ndvi'];
+    overlayRings.forEach(id=>{
+      const r = RING_DEFS.find(r=>r.id===id);
+      if(r && actuals[id] && layouts[id]) drawActualsLine(r, actuals[id], layouts[id]);
+    });
+    drawTodayDot(layouts);
+  }
+  drawMinMaxMarkers(layouts);
+  if(displayState.moon)  drawMoon();
+  if(displayState.ticks) drawTicks();
+  if(displayState.axis)  drawAxes();
+  drawCenter();
+}
+
+// ════════════════════════════════════════════════════════
+//  LIVE CLIMATE  (Open-Meteo ERA5)
+// ════════════════════════════════════════════════════════
+function daylightDaily(lat){
+  return Array.from({length:365},(_,i)=>{
+    const d=i+1;
+    const decl=23.45*Math.sin(Math.radians((360/365)*(d-81)));
+    const latR=lat*Math.PI/180;
+    const declR=decl*Math.PI/180;
+    const cosH=-Math.tan(latR)*Math.tan(declR);
+    if(cosH<=-1)return 24;if(cosH>=1)return 0;
+    return Math.round((2/15)*Math.acos(cosH)*180/Math.PI*100)/100;
+  });
+}
+Math.radians=deg=>deg*Math.PI/180;
+
+async function geocode(q){
+  const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,{headers:{'Accept-Language':'en'}});
+  const d=await r.json();
+  if(!d.length)throw new Error('City not found — try a different spelling');
+  return{lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon),name:d[0].display_name};
+}
+
+async function fetchClimateAPI(lat,lon){
+  const url=`https://climate-api.open-meteo.com/v1/climate?latitude=${lat}&longitude=${lon}&start_date=1991-01-01&end_date=2020-12-31&models=ERA5&monthly=temperature_2m_mean,precipitation_sum,windspeed_10m_mean`;
+  const r=await fetch(url);
+  if(!r.ok)throw new Error('Climate API error');
+  return r.json();
+}
+
+function aggregateClimate(d,lat){
+  const times=d.monthly.time,tempC=d.monthly.temperature_2m_mean,
+        precMM=d.monthly.precipitation_sum,windKmh=d.monthly.windspeed_10m_mean;
+  const ts=new Array(12).fill(0),tc=new Array(12).fill(0);
+  const rs=new Array(12).fill(0),ws=new Array(12).fill(0),wc=new Array(12).fill(0);
+  times.forEach((t,i)=>{
+    const m=parseInt(t.split('-')[1])-1;
+    if(tempC[i]!=null){ts[m]+=tempC[i];tc[m]++;}
+    if(precMM[i]!=null)rs[m]+=precMM[i];
+    if(windKmh[i]!=null){ws[m]+=windKmh[i];wc[m]++;}
+  });
+  const cnt=n=>Math.max(n,1);
+  const tempFmon=ts.map((s,i)=>Math.round((s/cnt(tc[i])*9/5+32)*10)/10);
+  const rainMon=rs.map((s,i)=>Math.round(s/cnt(tc[i])/25.4*100)/100);
+  const windMon=ws.map((s,i)=>Math.round(s/cnt(wc[i])*.621371*10)/10);
+  function monthlyToDaily(monthly){
+    const mids=[];let doy=0;
+    DIM.forEach((d,m)=>{mids.push(doy+d/2);doy+=d;});
+    const ext=[...mids.map(m=>m-365),...mids,...mids.map(m=>m+365)];
+    const extV=[...monthly,...monthly,...monthly];
+    return Array.from({length:365},(_,day)=>{
+      for(let i=0;i<ext.length-1;i++){
+        if(ext[i]<=day&&day<ext[i+1]){
+          const t=(day-ext[i])/(ext[i+1]-ext[i]);
+          const ts=(1-Math.cos(t*Math.PI))/2;
+          return Math.round((extV[i]*(1-ts)+extV[i+1]*ts)*100)/100;
+        }
+      }
+      return monthly[0];
+    });
+  }
+  return{
+    tempF:monthlyToDaily(tempFmon),rainIn:monthlyToDaily(rainMon),
+    windMph:monthlyToDaily(windMon),daylight:daylightDaily(lat),
+    resolution:'daily (ERA5 1991-2020 normals)',
+  };
+}
+
+// ════════════════════════════════════════════════════════
+//  LIVE NDVI — NASA ORNL DAAC MODIS MOD13Q1
+// ════════════════════════════════════════════════════════
+function modisJulianDates(yearStart,yearEnd){
+  const dates=[];
+  for(let y=yearStart;y<=yearEnd;y++){
+    for(let d=1;d<=365;d+=16){
+      dates.push(`A${y}${String(d).padStart(3,'0')}`);
+    }
+  }
+  return dates;
+}
+
+async function fetchModisBatch(lat,lon,dates){
+  const start=dates[0],end=dates[dates.length-1];
+  const url=`https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`+
+    `latitude=${lat}&longitude=${lon}&startDate=${start}&endDate=${end}`+
+    `&kmAboveBelow=0&kmLeftRight=0`;
+  const r=await fetch(url,{headers:{Accept:'application/json'}});
+  if(!r.ok){console.warn('MODIS batch failed',r.status);return[];}
+  const d=await r.json();
+  const ndviRows=(d.subset||[]).filter(s=>s.band==='250m_16_days_NDVI');
+  return ndviRows.map(row=>({
+    date:row.calendar_date,value:row.data[0]*row.scale,
+  })).filter(x=>x.value>-0.2&&x.value<=1.0);
+}
+
+async function fetchModisNDVI(lat,lon,onProgress){
+  const allDates=modisJulianDates(2019,2022);
+  const CHUNK=10;const results=[];let done=0;
+  for(let i=0;i<allDates.length;i+=CHUNK){
+    const batch=allDates.slice(i,i+CHUNK);
+    const rows=await fetchModisBatch(lat,lon,batch);
+    results.push(...rows);
+    done+=batch.length;
+    onProgress(Math.round(done/allDates.length*100));
+    await new Promise(res=>setTimeout(res,120));
+  }
+  const doySum=new Array(365).fill(0),doyCnt=new Array(365).fill(0);
+  results.forEach(({date,value})=>{
+    const [yr,mo,dy]=date.split('-').map(Number);
+    let doy=0;
+    const dim=[31,28,31,30,31,30,31,31,30,31,30,31];
+    for(let m=0;m<mo-1;m++) doy+=dim[m];
+    doy+=dy-1;if(doy>364) doy=364;
+    for(let dd=0;dd<16;dd++){const d2=(doy+dd)%365;doySum[d2]+=value;doyCnt[d2]++;}
+  });
+  let raw=doySum.map((s,i)=>doyCnt[i]>0?s/doyCnt[i]:null);
+  for(let pass=0;pass<3;pass++){
+    for(let i=0;i<365;i++){
+      if(raw[i]===null){
+        const prev=raw[(i+364)%365],next=raw[(i+1)%365];
+        if(prev!==null&&next!==null) raw[i]=(prev+next)/2;
+        else if(prev!==null) raw[i]=prev;
+        else if(next!==null) raw[i]=next;
+      }
+    }
+  }
+  const sigma=7,kernelR=14;
+  function gauss(x){return Math.exp(-0.5*(x/sigma)**2);}
+  const ndvi=raw.map((_,i)=>{
+    let sum=0,wt=0;
+    for(let k=-kernelR;k<=kernelR;k++){
+      const j=(i+k+365)%365;
+      if(raw[j]!==null){const w=gauss(k);sum+=raw[j]*w;wt+=w;}
+    }
+    return Math.round((wt>0?sum/wt:0)*1000)/1000;
+  });
+  return ndvi;
+}
+
+// ════════════════════════════════════════════════════════
+//  FETCH ACTUALS  (past ~6 months)
+// ════════════════════════════════════════════════════════
+async function fetchActuals(lat, lon) {
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const start = new Date(now); start.setDate(start.getDate() - 185);
+  const startStr = `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,'0')}-${String(start.getDate()).padStart(2,'0')}`;
+  const url = `https://archive-api.open-meteo.com/v1/archive?`+
+    `latitude=${lat}&longitude=${lon}`+
+    `&start_date=${startStr}&end_date=${todayStr}`+
+    `&daily=temperature_2m_mean,precipitation_sum`+
+    `&timezone=auto`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(`Actuals API error ${r.status}`);
+  const d = await r.json();
+  if(!d.daily?.time?.length) throw new Error('No actuals data returned');
+  const tempEntries = [], rainEntries = [];
+  d.daily.time.forEach((dateStr, i) => {
+    const doy = calendarDOY(dateStr);
+    const tc = d.daily.temperature_2m_mean[i];
+    const p  = d.daily.precipitation_sum[i];
+    if(tc != null) tempEntries.push({ doy, value: Math.round((tc*9/5+32)*10)/10 });
+    if(p  != null) rainEntries.push({ doy, value: Math.round(p/25.4*1000)/1000 });
+  });
+  todayDOY = calendarDOY(todayStr);
+  return { temp: tempEntries, rain: rainEntries };
+}
+
+async function fetchRecentNDVI(lat, lon) {
+  const now = new Date();
+  const yr = now.getFullYear();
+  const currentDOY = calendarDOY(`${yr}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`);
+  const allDates = [];
+  for(let offset = 185; offset >= 0; offset -= 16) {
+    const d = new Date(now); d.setDate(d.getDate() - offset);
+    const y = d.getFullYear();
+    const doy16 = Math.floor(calendarDOY(`${y}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`) / 16) * 16 + 1;
+    const key = `A${y}${String(Math.min(doy16,365)).padStart(3,'0')}`;
+    if(!allDates.includes(key)) allDates.push(key);
+  }
+  allDates.sort();
+  if(!allDates.length) return null;
+  const CHUNK = 10;const results = [];
+  for(let i=0; i<allDates.length; i+=CHUNK){
+    const batch = allDates.slice(i, i+CHUNK);
+    try { const rows = await fetchModisBatch(lat, lon, batch); results.push(...rows); }
+    catch(e) { console.warn('Recent NDVI batch failed', e); }
+    if(i+CHUNK < allDates.length) await new Promise(res=>setTimeout(res,120));
+  }
+  if(!results.length) return null;
+  const entries = results.map(({date, value}) => ({doy: calendarDOY(date), value, date}));
+  entries.sort((a,b) => a.date < b.date ? -1 : 1);
+  const byDoy = {};
+  entries.forEach(e=>{
+    if(byDoy[e.doy]) byDoy[e.doy] = (byDoy[e.doy]+e.value)/2;
+    else byDoy[e.doy] = e.value;
+  });
+  return Object.entries(byDoy)
+    .map(([doy,value])=>({doy:Number(doy),value}))
+    .sort((a,b)=>a.doy-b.doy);
+}
+
+// ════════════════════════════════════════════════════════
+//  MAIN FETCH ORCHESTRATION
+// ════════════════════════════════════════════════════════
+async function fetchCity(){
+  const q=document.getElementById('cityInput').value.trim();
+  if(!q)return;
+  setStatus('loading','Geocoding...');
+  setLoading(true);
+  actuals=null; todayDOY=null;
+  setNdviProgress(false);
+  try{
+    const geo=await geocode(q);
+    const shortName=geo.name.split(',').slice(0,2).join(',').trim();
+    setStatus('loading',`Found ${shortName} — fetching climate normals...`);
+    const rawClimate=await fetchClimateAPI(geo.lat,geo.lon);
+    const climate=aggregateClimate(rawClimate,geo.lat);
+    const{tempF,rainIn,windMph,daylight}=climate;
+    setStatus('loading',`Normals loaded — fetching MODIS NDVI...`);
+    setNdviProgress(true,0,'Fetching MODIS satellite data...');
+    let ndvi;
+    try{
+      ndvi=await fetchModisNDVI(geo.lat,geo.lon,pct=>{
+        setNdviProgress(true,pct,`MODIS NDVI: ${pct}%...`);
+      });
+      setNdviProgress(false);
+    }catch(e){
+      ndvi=ndviProxyFallback(tempF,rainIn);
+      setNdviProgress(false);
+    }
+    currentData={
+      name:shortName,lat:geo.lat,lon:geo.lon,
+      temp:tempF,rain:rainIn,daylight,ndvi,wind:windMph,
+      resolution:climate.resolution,
+      ndviSource:ndvi?'MODIS 2019-2022':'proxy',
+    };
+    activePreset='';refreshPresets();draw();
+    setStatus('loading',`Fetching actuals for past 6 months...`);
+    try{
+      const weatherActuals = await fetchActuals(geo.lat,geo.lon);
+      actuals = { temp: weatherActuals.temp, rain: weatherActuals.rain, ndvi: null };
+      draw();
+      setStatus('ok',`${shortName} — normals + actuals loaded (temp & rain). Today = DOY ${todayDOY}.`);
+      try{
+        const recentNdvi = await fetchRecentNDVI(geo.lat,geo.lon);
+        if(recentNdvi?.length){ actuals.ndvi=recentNdvi; draw(); }
+      }catch(e){ /* NDVI actuals optional */ }
+    }catch(e){
+      setStatus('error',`Normals loaded. Actuals failed: ${e.message}`);
+    }
+  }catch(e){
+    setStatus('error',e.message);
+    setNdviProgress(false);
+  }finally{
+    setLoading(false);
+  }
+}
+
+function ndviProxyFallback(tempArr,rainArr){
+  return tempArr.map((t,i)=>{
+    const r=rainArr[i];let v=.08;
+    if(r>.05)v+=.32*(Math.min(r*30,5)/5);
+    if(t>40&&t<90)v+=.28*((t-40)/50);
+    if(t>80)v*=.78;if(r<.003&&t>65)v*=.55;
+    return Math.round(Math.max(.05,Math.min(.80,v))*1000)/1000;
+  });
+}
+
+function setStatus(type,msg){const el=document.getElementById('status');el.className='status '+type;el.textContent=msg;}
+function setLoading(on){document.getElementById('spinner').className='spinner'+(on?' on':'');document.getElementById('fetchBtn').disabled=on;}
+function setNdviProgress(visible,pct=0,msg=''){
+  const el=document.getElementById('ndviProgress');
+  el.className='ndvi-progress'+(visible?' visible':'');
+  document.getElementById('ndviBar').style.width=pct+'%';
+  document.getElementById('ndviMsg').textContent=msg;
+}
+
+function loadPreset(p){
+  currentData=p.data;actuals=null;todayDOY=null;
+  document.getElementById('cityInput').value=p.city;
+  activePreset=p.label;refreshPresets();draw();
+  setStatus('ok','Loaded built-in data for '+p.data.name+' — click Load Live Data for actuals overlay');
+}
+function refreshPresets(){document.querySelectorAll('.preset-btn').forEach(b=>b.classList.toggle('active',b.dataset.label===activePreset));}
+
+// ════════════════════════════════════════════════════════
+//  RING CONTROLS UI  (drag to reorder)
+// ════════════════════════════════════════════════════════
+function buildRingControls(){
+  const c=document.getElementById('ringControls');
+  c.innerHTML='';c.style.display='flex';c.style.flexDirection='column';c.style.gap='0';
+  ringOrder.forEach((id,idx)=>{
+    const r=RING_DEFS.find(r=>r.id===id);
+    const s=ringState[id];
+    const div=document.createElement('div');
+    div.className='ring-row';div.dataset.id=id;div.draggable=true;
+    div.innerHTML=`
+      <div class="ring-header">
+        <span class="drag-handle" title="Drag to reorder">\u2823</span>
+        <div class="ring-dot" id="dot-${id}" style="background:${s.color}"></div>
+        <span class="ring-name">${r.label}</span>
+        <div class="reorder-btns">
+          <button class="reorder-btn" onclick="moveRing('${id}',-1)" title="Move inward" ${idx===0?'disabled':''}>↑</button>
+          <button class="reorder-btn" onclick="moveRing('${id}',1)" title="Move outward" ${idx===ringOrder.length-1?'disabled':''}>↓</button>
+        </div>
+        <button class="toggle ${s.visible?'on':''}" data-id="${id}" onclick="toggleRing(this)"></button>
+      </div>
+      <div class="ring-subcontrols" style="${s.visible?'':'opacity:.4;pointer-events:none'}">
+        <div class="slider-row">
+          <span class="slider-label">Thickness</span>
+          <input type="range" min=".2" max="2.5" step=".05" value="${s.thickness}" oninput="updateRing('${id}','thickness',this.value)">
+          <span class="slider-val" id="sv-thick-${id}">${s.thickness.toFixed(1)}&times;</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Opacity</span>
+          <input type="range" min=".1" max="1" step=".05" value="${s.opacity}" oninput="updateRing('${id}','opacity',this.value)">
+          <span class="slider-val" id="sv-opac-${id}">${Math.round(s.opacity*100)}%</span>
+        </div>
+        <div class="color-row"><label>Color</label><input type="color" value="${s.color}" oninput="updateRingColor('${id}',this.value)"></div>
+      </div>
+    `;
+    div.addEventListener('dragstart', e=>{
+      e.dataTransfer.setData('text/plain', id);div.classList.add('dragging');
+    });
+    div.addEventListener('dragend', ()=>div.classList.remove('dragging'));
+    div.addEventListener('dragover', e=>{e.preventDefault();div.classList.add('drag-over');});
+    div.addEventListener('dragleave', ()=>div.classList.remove('drag-over'));
+    div.addEventListener('drop', e=>{
+      e.preventDefault();div.classList.remove('drag-over');
+      const draggedId = e.dataTransfer.getData('text/plain');
+      const fromIdx = ringOrder.indexOf(draggedId);
+      const toIdx = ringOrder.indexOf(id);
+      if(fromIdx !== toIdx){
+        ringOrder.splice(fromIdx,1);ringOrder.splice(toIdx,0,draggedId);
+        buildRingControls();draw();rebuildLegend();
+      }
+    });
+    c.appendChild(div);
+  });
+}
+
+function moveRing(id, dir){
+  const i=ringOrder.indexOf(id);const j=i+dir;
+  if(j<0||j>=ringOrder.length) return;
+  [ringOrder[i],ringOrder[j]]=[ringOrder[j],ringOrder[i]];
+  buildRingControls();draw();rebuildLegend();
+}
+
+function toggleRing(btn){
+  const id=btn.dataset.id;
+  ringState[id].visible=!ringState[id].visible;
+  btn.classList.toggle('on',ringState[id].visible);
+  const sub=btn.closest('.ring-row').querySelector('.ring-subcontrols');
+  if(sub) sub.style.cssText=ringState[id].visible?'':'opacity:.4;pointer-events:none';
+  draw();rebuildLegend();
+}
+function updateRing(id,prop,val){
+  val=parseFloat(val);ringState[id][prop]=val;
+  if(prop==='thickness')document.getElementById(`sv-thick-${id}`).textContent=val.toFixed(1)+'×';
+  if(prop==='opacity')document.getElementById(`sv-opac-${id}`).textContent=Math.round(val*100)+'%';
+  draw();
+}
+function updateRingColor(id,val){ringState[id].color=val;document.getElementById(`dot-${id}`).style.background=val;draw();rebuildLegend();}
+function toggleDisplay(btn,key){displayState[key]=!displayState[key];btn.classList.toggle('on',displayState[key]);draw();}
+
+function rebuildLegend(){
+  const el=document.getElementById('legendEl');el.innerHTML='';
+  RING_DEFS.forEach(r=>{
+    if(!ringState[r.id].visible)return;
+    const d=document.createElement('div');d.className='legend-item';
+    d.innerHTML=`<div class="legend-swatch" style="background:${ringState[r.id].color}"></div> ${r.label} (${r.unit})`;
+    el.appendChild(d);
+  });
+  if(displayState.moon){const d=document.createElement('div');d.className='legend-item';d.innerHTML=`<div style="width:8px;height:8px;border-radius:50%;background:#8e7cc3;opacity:.85;flex-shrink:0"></div> Moon phases`;el.appendChild(d);}
+  const actualsEntry = document.createElement('div');actualsEntry.className='legend-item';actualsEntry.id='legend-actuals';
+  actualsEntry.innerHTML=`<div style="width:16px;height:2px;background:#2c2416;border-radius:1px;flex-shrink:0;margin:2px 0"></div> <span style="font-style:italic">— actuals (past 6 months)</span>`;
+  el.appendChild(actualsEntry);
+}
+
+// ════════════════════════════════════════════════════════
+//  TOOLTIP
+// ════════════════════════════════════════════════════════
+function setupTooltip(){
+  canvas.addEventListener('mousemove',e=>{
+    const rect=canvas.getBoundingClientRect(),sx=W/rect.width,sy=H/rect.height;
+    const mx=(e.clientX-rect.left)*sx,my=(e.clientY-rect.top)*sy;
+    const dx=mx-CX,dy=my-CY,r=Math.sqrt(dx*dx+dy*dy);
+    if(r<W*.055||r>W*.455){document.getElementById('tooltip').style.display='none';return;}
+    let frac=(Math.atan2(dy,dx)+Math.PI/2)/(2*Math.PI);if(frac<0)frac+=1;
+    const doy=Math.min(364,Math.floor(frac*365));
+    let acc=0,m=0;for(let i=0;i<12;i++){if(acc+DIM[i]>doy){m=i;break;}acc+=DIM[i];}
+    const dayInMonth=doy-acc+1;
+    const tip=document.getElementById('tooltip');
+    tip.style.display='block';tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY-10)+'px';
+    const icons={temp:'🌡',rain:'🌧',daylight:'☀️',ndvi:'🌿',wind:'💨'};
+    const actualsRings = new Set(['temp','rain','ndvi']);
+    const rows=ringOrder.filter(id=>ringState[id].visible).map(id=>{
+      const r=RING_DEFS.find(r=>r.id===id);
+      const v=currentData[id][doy];
+      const disp=id==='ndvi'?v.toFixed(3):(id==='rain'?v.toFixed(2):Math.round(v*10)/10);
+      let actual='';
+      if(actuals&&displayState.actuals&&actualsRings.has(id)){
+        const entries=actuals[id];
+        if(entries?.length){
+          const e=entries.reduce((b,x)=>Math.abs(x.doy-doy)<Math.abs(b.doy-doy)?x:b,entries[0]);
+          if(Math.abs(e.doy-doy)<=8){
+            const ad=id==='ndvi'?e.value.toFixed(3):(id==='rain'?e.value.toFixed(2):Math.round(e.value*10)/10);
+            const diff=Math.round((e.value-v)*10)/10;
+            const sign=diff>0?'+':'';
+            actual=` <span style="opacity:.7;font-size:.85em">(actual: ${ad}, ${sign}${diff})</span>`;
+          }
+        }
+      }
+      return `<span style="color:${ringState[id].color}">${icons[id]}</span> ${disp} ${r.unit}${actual}`;
+    }).join('<br>');
+    const res=currentData.resolution||'monthly';
+    tip.innerHTML=`<strong>${MON_S[m]} ${dayInMonth}</strong> <span style="font-size:.7em;opacity:.6">(${res})</span><br>${rows}`;
+  });
+  canvas.addEventListener('mouseleave',()=>{document.getElementById('tooltip').style.display='none';});
+}
+
+function exportPNG(){const a=document.createElement('a');a.download=`wheel-${currentData.name.replace(/[^a-z0-9]/gi,'_')}.png`;a.href=canvas.toDataURL('image/png');a.click();}
+
+// ════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════
+function init(){
+  canvas=document.getElementById('wheel');ctx=canvas.getContext('2d');
+  const sz=Math.min(660,window.innerWidth*.92);
+  canvas.width=sz;canvas.height=sz;W=sz;H=sz;CX=W/2;CY=H/2;
+  buildRingControls();rebuildLegend();draw();setupTooltip();
+  document.getElementById('cityInput').addEventListener('keydown',e=>{if(e.key==='Enter')fetchCity();});
+  window.addEventListener('resize',()=>{
+    const ns=Math.min(660,window.innerWidth*.92);
+    if(Math.abs(ns-W)>5){canvas.width=ns;canvas.height=ns;W=ns;H=ns;CX=W/2;CY=H/2;draw();}
+  });
+}
+window.onload=init;
+</script>
+
+</body>
+</html>
