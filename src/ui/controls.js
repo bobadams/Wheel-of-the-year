@@ -1,5 +1,5 @@
 import { RING_DEFS } from '../data/ringDefs.js';
-import { ringOrder, ringState, displayState } from '../state.js';
+import { ringOrder, ringState, displayState, currentData } from '../state.js';
 import { rebuildLegend } from './legend.js';
 
 // draw is passed in to avoid a circular dependency (main.js owns draw)
@@ -20,7 +20,7 @@ export function buildRingControls() {
       <div class="ring-header">
         <span class="drag-handle" title="Drag to reorder">⠿</span>
         <div class="ring-dot" id="dot-${id}" style="background:${s.color}"></div>
-        <span class="ring-name">${r.label}</span>
+        <span class="ring-name">${r.label}<span class="ring-source" id="rs-${id}"></span></span>
         <div class="reorder-btns">
           <button class="reorder-btn" data-id="${id}" data-dir="-1" title="Move inward" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="reorder-btn" data-id="${id}" data-dir="1"  title="Move outward" ${idx === ringOrder.length - 1 ? 'disabled' : ''}>↓</button>
@@ -62,6 +62,24 @@ export function buildRingControls() {
   // Delegated event handling for all controls inside the panel
   c.addEventListener('click', handleControlClick);
   c.addEventListener('input', handleControlInput);
+
+  refreshSourceBadges();
+}
+
+/** Update the per-ring source-interval badges from currentData.meta */
+export function refreshSourceBadges() {
+  const meta = currentData.meta;
+  RING_DEFS.forEach(r => {
+    const el = document.getElementById(`rs-${r.id}`);
+    if (!el) return;
+    if (meta?.[r.id]) {
+      el.textContent = meta[r.id].sourceInterval;
+      el.title = meta[r.id].source;
+    } else {
+      el.textContent = '';
+      el.title = '';
+    }
+  });
 }
 
 function handleControlClick(e) {

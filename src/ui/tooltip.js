@@ -45,11 +45,13 @@ export function setupTooltip() {
           }
         }
       }
-      return `<span style="color:${ringState[id].color}">${ICONS[id]}</span> ${disp} ${r.unit}${actual}`;
+      const srcTag = currentData.meta?.[id]
+        ? `<span style="opacity:.45;font-size:.75em;margin-left:.3em">${currentData.meta[id].sourceInterval}</span>`
+        : '';
+      return `<span style="color:${ringState[id].color}">${ICONS[id]}</span> ${disp} ${r.unit}${srcTag}${actual}`;
     }).join('<br>');
 
-    const res = currentData.resolution || 'monthly';
-    tip.innerHTML = `<strong>${MON_S[m]} ${doy - acc + 1}</strong> <span style="font-size:.7em;opacity:.6">(${res})</span><br>${rows}`;
+    tip.innerHTML = `<strong>${MON_S[m]} ${doy - acc + 1}</strong><br>${rows}`;
   });
 
   el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });

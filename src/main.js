@@ -17,7 +17,7 @@ import { fetchModisNDVI, ndviProxyFallback } from './fetch/ndvi.js';
 import { fetchActuals, fetchRecentNDVI } from './fetch/actuals.js';
 import { setStatus, setLoading, setNdviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
-import { buildRingControls, toggleDisplay, setDrawCallback } from './ui/controls.js';
+import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
 import { setupTooltip } from './ui/tooltip.js';
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
@@ -90,9 +90,17 @@ async function fetchCity() {
       ndvi, wind: climate.windMph,
       resolution: climate.resolution,
       ndviSource: ndvi ? 'MODIS 2019–2022' : 'proxy',
+      meta: {
+        temp:     { sourceInterval: 'monthly',    source: 'ERA5 1991–2020 normals' },
+        rain:     { sourceInterval: 'monthly',    source: 'ERA5 1991–2020 normals' },
+        daylight: { sourceInterval: 'calculated', source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
+        ndvi:     { sourceInterval: ndvi ? '16-day' : 'proxy', source: ndvi ? 'MODIS MOD13Q1 2019–2022' : 'ERA5-derived proxy' },
+        wind:     { sourceInterval: 'monthly',    source: 'ERA5 1991–2020 normals' },
+      },
     });
     setActivePreset('');
     refreshPresets();
+    refreshSourceBadges();
     draw();
 
     // Actuals overlay (non-blocking)
@@ -125,7 +133,7 @@ function loadPreset(p) {
   setActuals(null); setTodayDOY(null);
   document.getElementById('cityInput').value = p.city;
   setActivePreset(p.label);
-  refreshPresets(); draw();
+  refreshPresets(); refreshSourceBadges(); draw();
   setStatus('ok', `Loaded built-in data for ${p.data.name} — click Load Live Data for actuals overlay`);
 }
 
@@ -156,7 +164,7 @@ function init() {
   resizeCanvas();
 
   setDrawCallback(draw);
-  buildRingControls();
+  buildRingControls(); // also calls refreshSourceBadges internally
   rebuildLegend();
   draw();
   setupTooltip();
