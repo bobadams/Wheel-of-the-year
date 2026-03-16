@@ -91,11 +91,11 @@ async function fetchCity() {
       resolution: climate.resolution,
       ndviSource: ndvi ? 'MODIS 2019–2022' : 'proxy',
       meta: {
-        temp:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020 normals' },
-        rain:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020 normals' },
-        daylight: { sourceInterval: 'calculated',  source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
+        temp:     { sourceInterval: 'monthly',    source: 'ERA5 1991–2020 normals' },
+        rain:     { sourceInterval: 'monthly',    source: 'ERA5 1991–2020 normals' },
+        daylight: { sourceInterval: 'calculated', source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
         ndvi:     { sourceInterval: ndvi ? '16-day' : 'proxy', source: ndvi ? 'MODIS MOD13Q1 2019–2022' : 'ERA5-derived proxy' },
-        wind:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020 normals' },
+        wind:     { sourceInterval: 'monthly',    source: 'ERA5 1991–2020 normals' },
       },
     });
     setActivePreset('');
