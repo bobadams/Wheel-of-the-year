@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wheel of the Year</title>
+</head>
+<body>
+
+<header>
+  <h1>Wheel of the Year</h1>
+  <p class="subtitle">Climate &amp; Ecological Calendar</p>
+</header>
+
+<div class="search-row">
+  <input class="search-input" id="cityInput" type="text" placeholder="Enter any city worldwide…" value="Oakland, California" />
+  <div class="spinner" id="spinner"></div>
+  <button class="btn" id="fetchBtn" onclick="fetchCity()">Load Live Data</button>
+</div>
+
+<div class="status ok" id="status">Built-in data loaded. Enter any city and click Load for live data including real MODIS NDVI.</div>
+
+<div class="ndvi-progress" id="ndviProgress">
+  <div class="ndvi-bar-wrap"><div class="ndvi-bar" id="ndviBar"></div></div>
+  <div class="ndvi-msg" id="ndviMsg">Fetching MODIS NDVI satellite data…</div>
+</div>
+
+<div class="main-row">
+  <div class="wheel-wrap"><canvas id="wheel"></canvas></div>
+  <div class="controls-panel">
+    <div class="panel-title">Ring Controls</div>
+    <div id="ringControls"></div>
+    <hr class="divider">
+    <div class="panel-title">Display Options</div>
+    <div class="misc-row"><span class="misc-label">Moon phases</span><button class="toggle on" onclick="toggleDisplay(this,'moon')"></button></div>
+    <div class="misc-row"><span class="misc-label">Solstice / equinox axes</span><button class="toggle on" onclick="toggleDisplay(this,'axis')"></button></div>
+    <div class="misc-row"><span class="misc-label">Month tick labels</span><button class="toggle on" onclick="toggleDisplay(this,'ticks')"></button></div>
+    <div class="misc-row"><span class="misc-label">Actuals overlay</span><button class="toggle on" id="actualsToggle" onclick="toggleDisplay(this,'actuals')"></button></div>
+    <hr class="divider">
+    <button class="btn btn-outline" style="width:100%;margin-top:.2rem" onclick="exportPNG()">⬇ Export PNG</button>
+  </div>
+</div>
+
+<div class="presets" id="presetsEl"></div>
+<div class="legend" id="legendEl"></div>
+<p class="data-note">
+  Ring width = normalized daily value (wider arc = higher). Hover anywhere for daily values — or monthly for built-in presets.<br>
+  Filled area = 30-year ERA5 climate normals. <strong>Solid line</strong> = actuals (past 6 months, temp &amp; rain via <a href="https://open-meteo.com" target="_blank">Open-Meteo</a>, vegetation via <a href="https://modis.ornl.gov" target="_blank">MODIS</a>).<br>
+  Geocoding via <a href="https://nominatim.openstreetmap.org" target="_blank">OpenStreetMap</a>
+</p>
+<div class="tooltip" id="tooltip"></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

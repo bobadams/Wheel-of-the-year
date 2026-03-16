@@ -1,0 +1,84 @@
+function modisJulianDates(yearStart, yearEnd) {
+  const dates = [];
+  for (let y = yearStart; y <= yearEnd; y++) {
+    for (let d = 1; d <= 365; d += 16) {
+      dates.push(`A${y}${String(d).padStart(3, '0')}`);
+    }
+  }
+  return dates;
+}
+
+export async function fetchModisBatch(lat, lon, dates) {
+  const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
+    + `latitude=${lat}&longitude=${lon}&startDate=${dates[0]}&endDate=${dates[dates.length - 1]}`
+    + `&kmAboveBelow=0&kmLeftRight=0`;
+  const r = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
+  const d = await r.json();
+  return (d.subset || [])
+    .filter(s => s.band === '250m_16_days_NDVI')
+    .map(row => ({ date: row.calendar_date, value: row.data[0] * row.scale }))
+    .filter(x => x.value > -0.2 && x.value <= 1.0);
+}
+
+export async function fetchModisNDVI(lat, lon, onProgress) {
+  const allDates = modisJulianDates(2019, 2022);
+  const CHUNK = 10;
+  const results = [];
+  let done = 0;
+
+  for (let i = 0; i < allDates.length; i += CHUNK) {
+    const batch = allDates.slice(i, i + CHUNK);
+    results.push(...await fetchModisBatch(lat, lon, batch));
+    done += batch.length;
+    onProgress(Math.round(done / allDates.length * 100));
+    await new Promise(res => setTimeout(res, 120));
+  }
+
+  // Accumulate NDVI per DOY across years
+  const doySum = new Array(365).fill(0), doyCnt = new Array(365).fill(0);
+  const dim = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  results.forEach(({ date, value }) => {
+    const [, mo, dy] = date.split('-').map(Number);
+    let doy = 0;
+    for (let m = 0; m < mo - 1; m++) doy += dim[m];
+    doy = Math.min(doy + dy - 1, 364);
+    for (let dd = 0; dd < 16; dd++) { const d2 = (doy + dd) % 365; doySum[d2] += value; doyCnt[d2]++; }
+  });
+
+  let raw = doySum.map((s, i) => doyCnt[i] > 0 ? s / doyCnt[i] : null);
+
+  // Fill nulls by interpolation
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < 365; i++) {
+      if (raw[i] === null) {
+        const prev = raw[(i + 364) % 365], next = raw[(i + 1) % 365];
+        raw[i] = prev !== null && next !== null ? (prev + next) / 2
+               : prev !== null ? prev : next;
+      }
+    }
+  }
+
+  // Gaussian smoothing to remove 16-day staircase artifacts
+  const sigma = 7, kernelR = 14;
+  const gauss = x => Math.exp(-0.5 * (x / sigma) ** 2);
+  return raw.map((_, i) => {
+    let sum = 0, wt = 0;
+    for (let k = -kernelR; k <= kernelR; k++) {
+      const j = (i + k + 365) % 365;
+      if (raw[j] !== null) { const w = gauss(k); sum += raw[j] * w; wt += w; }
+    }
+    return Math.round((wt > 0 ? sum / wt : 0) * 1000) / 1000;
+  });
+}
+
+export function ndviProxyFallback(tempArr, rainArr) {
+  return tempArr.map((t, i) => {
+    const r = rainArr[i]; let v = .08;
+    if (r > .05)        v += .32 * (Math.min(r * 30, 5) / 5);
+    if (t > 40 && t < 90) v += .28 * ((t - 40) / 50);
+    if (t > 80)         v *= .78;
+    if (r < .003 && t > 65) v *= .55;
+    return Math.round(Math.max(.05, Math.min(.80, v)) * 1000) / 1000;
+  });
+}

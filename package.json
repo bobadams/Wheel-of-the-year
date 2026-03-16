@@ -1,0 +1,15 @@
+{
+  "name": "wheel-of-the-year",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "generate-presets": "node scripts/generate-preset-oakland.js"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
