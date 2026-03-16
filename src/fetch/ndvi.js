@@ -1,39 +1,20 @@
-function modisJulianDates(yearStart, yearEnd) {
-  const dates = [];
-  for (let y = yearStart; y <= yearEnd; y++) {
-    for (let d = 1; d <= 365; d += 16) {
-      dates.push(`A${y}${String(d).padStart(3, '0')}`);
-    }
-  }
-  return dates;
-}
-
-export async function fetchModisBatch(lat, lon, dates) {
-  const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
-    + `latitude=${lat}&longitude=${lon}&startDate=${dates[0]}&endDate=${dates[dates.length - 1]}`
-    + `&kmAboveBelow=0&kmLeftRight=0`;
-  const r = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
-  const d = await r.json();
-  return (d.subset || [])
-    .filter(s => s.band === '250m_16_days_NDVI')
-    .map(row => ({ date: row.calendar_date, value: row.data[0] * row.scale }))
-    .filter(x => x.value > -0.2 && x.value <= 1.0);
-}
-
 export async function fetchModisNDVI(lat, lon, onProgress) {
-  const allDates = modisJulianDates(2019, 2022);
-  const CHUNK = 10;
-  const results = [];
-  let done = 0;
-
-  for (let i = 0; i < allDates.length; i += CHUNK) {
-    const batch = allDates.slice(i, i + CHUNK);
-    results.push(...await fetchModisBatch(lat, lon, batch));
-    done += batch.length;
-    onProgress(Math.round(done / allDates.length * 100));
-    await new Promise(res => setTimeout(res, 120));
-  }
+  onProgress(0);
+  const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
+    + `latitude=${lat}&longitude=${lon}&startDate=A2019001&endDate=A2022353`
+    + `&kmAboveBelow=2&kmLeftRight=2`;
+  const r = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!r.ok) throw new Error(`MODIS request failed: ${r.status}`);
+  const d = await r.json();
+  onProgress(100);
+  const results = (d.subset || [])
+    .filter(s => s.band === '250m_16_days_NDVI')
+    .map(row => {
+      const vals = row.data.map(v => v * row.scale).filter(v => v > -0.2 && v <= 1.0);
+      if (!vals.length) return null;
+      return { date: row.calendar_date, value: vals.reduce((a, b) => a + b, 0) / vals.length };
+    })
+    .filter(Boolean);
 
   // Accumulate NDVI per DOY across years
   const doySum = new Array(365).fill(0), doyCnt = new Array(365).fill(0);
