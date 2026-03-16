@@ -99,63 +99,36 @@ function computeDaylight() {
 
 // ─── MODIS MOD13Q1 16-day NDVI (ORNL DAAC) ───────────────────────────────────
 
-function julianKey(year, doy1based) {
-  return `A${year}${String(Math.min(doy1based, 365)).padStart(3, '0')}`;
-}
-
-async function fetchModisBatch(startKey, endKey, attempt = 1) {
+async function fetchModisNDVI(startYear, endYear) {
+  const startKey = `A${startYear}001`;
+  const endKey   = `A${endYear}353`;
+  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (single request, 4km box)… `);
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${LAT}&longitude=${LON}`
     + `&startDate=${startKey}&endDate=${endKey}`
-    + `&kmAboveBelow=0&kmLeftRight=0`;
-  try {
-    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
-    if (!r.ok) { console.warn(`  MODIS ${startKey}–${endKey}: HTTP ${r.status}`); return []; }
-    const d = await r.json();
-    return (d.subset || [])
-      .filter(s => s.band === '250m_16_days_NDVI')
-      .map(row => ({ date: row.calendar_date, value: row.data[0] * row.scale }))
-      .filter(x => x.value > -0.2 && x.value <= 1.0);
-  } catch (e) {
-    if (attempt < 3) {
-      await new Promise(res => setTimeout(res, attempt * 1000));
-      return fetchModisBatch(startKey, endKey, attempt + 1);
-    }
-    console.warn(`  MODIS ${startKey}–${endKey}: ${e.message}`);
-    return [];
-  }
-}
+    + `&kmAboveBelow=2&kmLeftRight=2`;
+  const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(120_000) });
+  if (!r.ok) throw new Error(`MODIS HTTP ${r.status}: ${await r.text()}`);
+  const d = await r.json();
+  process.stdout.write('done.\n');
 
-async function fetchModisNDVI(startYear, endYear) {
-  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (16-day composites):\n`);
   const doySum = new Array(365).fill(0);
   const doyCnt = new Array(365).fill(0);
 
-  for (let year = startYear; year <= endYear; year++) {
-    process.stdout.write(`  ${year}: `);
-    const doys = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // DOY 1, 17, 33 … 353
-
-    for (let i = 0; i < doys.length; i += 5) {
-      const batch = doys.slice(i, i + 5);
-      const results = await fetchModisBatch(
-        julianKey(year, batch[0]),
-        julianKey(year, batch[batch.length - 1])
-      );
-      process.stdout.write(results.length ? '.' : 'x');
-      results.forEach(({ date, value }) => {
-        const doy = dateToCalDOY(date);
-        if (doy < 0) return;
-        // Spread value across the 16-day composite window
-        for (let dd = 0; dd < 16; dd++) {
-          const d2 = (doy + dd) % 365;
-          doySum[d2] += value;
-          doyCnt[d2]++;
-        }
-      });
-      await new Promise(res => setTimeout(res, 200));
-    }
-    process.stdout.write('\n');
-  }
+  (d.subset || [])
+    .filter(s => s.band === '250m_16_days_NDVI')
+    .forEach(row => {
+      const vals = row.data.map(v => v * row.scale).filter(v => v > -0.2 && v <= 1.0);
+      if (!vals.length) return;
+      const value = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const doy = dateToCalDOY(row.calendar_date);
+      if (doy < 0) return;
+      for (let dd = 0; dd < 16; dd++) {
+        const d2 = (doy + dd) % 365;
+        doySum[d2] += value;
+        doyCnt[d2]++;
+      }
+    });
 
   // Build raw annual-average array
   let raw = doySum.map((s, i) => doyCnt[i] > 0 ? s / doyCnt[i] : null);
