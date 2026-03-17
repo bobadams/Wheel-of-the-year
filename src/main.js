@@ -4,7 +4,7 @@ import { RING_DEFS } from './data/ringDefs.js';
 import { PRESETS } from './data/presets.js';
 import {
   canvas, ringOrder, ringState, displayState,
-  currentData, actuals,
+  currentData, smoothedData, actuals,
   setCurrentData, setActivePreset, setActuals, setTodayDOY,
 } from './state.js';
 import { computeRingLayouts } from './draw/layout.js';
@@ -32,7 +32,8 @@ function draw() {
     const s = ringState[id];
     if (!s.visible || !layouts[id]) return;
     const { innerFrac, thickFrac } = layouts[id];
-    drawRing(currentData[id], r.normLo, r.normHi, innerFrac * W, thickFrac * W, s.color, s.opacity);
+    const ringData = s.smooth && smoothedData[id] ? smoothedData[id] : currentData[id];
+    drawRing(ringData, r.normLo, r.normHi, innerFrac * W, thickFrac * W, s.color, s.opacity);
   });
 
   // Outer decorative circles

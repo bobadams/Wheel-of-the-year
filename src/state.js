@@ -1,5 +1,6 @@
 import { RING_DEFS } from './data/ringDefs.js';
 import { PRESETS } from './data/presets.js';
+import { gaussianSmooth } from './utils/smooth.js';
 
 // Ring display order (innermost → outermost)
 export const ringOrder = ['temp', 'rain', 'daylight', 'ndvi', 'wind'];
@@ -7,7 +8,7 @@ export const ringOrder = ['temp', 'rain', 'daylight', 'ndvi', 'wind'];
 // Per-ring UI state
 export const ringState = {};
 RING_DEFS.forEach(r => {
-  ringState[r.id] = { visible: true, color: r.color, thickness: 1.0, opacity: .82 };
+  ringState[r.id] = { visible: true, color: r.color, thickness: 1.0, opacity: .82, smooth: true };
 });
 
 // Global display toggles
@@ -16,8 +17,20 @@ export const displayState = { moon: true, axis: true, ticks: true, actuals: true
 // Currently displayed climate data
 export let currentData = PRESETS[0].data;
 export let activePreset = 'Oakland';
+export let smoothedData = precomputeSmoothed(PRESETS[0].data);
 
-export function setCurrentData(data) { currentData = data; }
+function precomputeSmoothed(data) {
+  const out = {};
+  ['temp', 'rain', 'daylight', 'ndvi', 'wind'].forEach(id => {
+    if (Array.isArray(data[id])) out[id] = gaussianSmooth(data[id]);
+  });
+  return out;
+}
+
+export function setCurrentData(data) {
+  currentData = data;
+  smoothedData = precomputeSmoothed(data);
+}
 export function setActivePreset(name) { activePreset = name; }
 
 // Actuals overlay (past ~6 months of real observations)
