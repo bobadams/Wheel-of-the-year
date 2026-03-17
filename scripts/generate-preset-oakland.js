@@ -110,7 +110,7 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
     + `&kmAboveBelow=0&kmLeftRight=0`;
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(60_000) });
-    if (!r.ok) { console.warn(`  MODIS ${startKey}–${endKey}: HTTP ${r.status}`); return []; }
+    if (!r.ok) { const body = await r.text(); console.warn(`  MODIS ${startKey}–${endKey}: HTTP ${r.status}: ${body.slice(0, 300)}`); return []; }
     const d = await r.json();
     return (d.subset || [])
       .filter(s => s.band === '250m_16_days_NDVI')
