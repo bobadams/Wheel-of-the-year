@@ -1,13 +1,15 @@
-export async function fetchModisNDVI(lat, lon, onProgress) {
-  onProgress(0);
+function modisJulianKey(year, doy) {
+  return `A${year}${String(doy).padStart(3, '0')}`;
+}
+
+export async function fetchModisBatch(lat, lon, dates) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
-    + `latitude=${lat}&longitude=${lon}&startDate=A2019001&endDate=A2022353`
-    + `&kmAboveBelow=2&kmLeftRight=2`;
+    + `latitude=${lat}&longitude=${lon}&startDate=${dates[0]}&endDate=${dates[dates.length - 1]}`
+    + `&kmAboveBelow=0&kmLeftRight=0`;
   const r = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!r.ok) throw new Error(`MODIS request failed: ${r.status}`);
+  if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
   const d = await r.json();
-  onProgress(100);
-  const results = (d.subset || [])
+  return (d.subset || [])
     .filter(s => s.band === '250m_16_days_NDVI')
     .map(row => {
       const vals = row.data.map(v => v * row.scale).filter(v => v > -0.2 && v <= 1.0);
@@ -15,6 +17,21 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
       return { date: row.calendar_date, value: vals.reduce((a, b) => a + b, 0) / vals.length };
     })
     .filter(Boolean);
+}
+
+export async function fetchModisNDVI(lat, lon, onProgress) {
+  const years = [2019, 2020, 2021, 2022];
+  const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
+  const BATCH = 10; // API max
+  const results = [];
+  let done = 0, total = years.length * Math.ceil(MODIS_DOYS.length / BATCH);
+  for (const y of years) {
+    for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
+      const batch = MODIS_DOYS.slice(i, i + BATCH);
+      results.push(...await fetchModisBatch(lat, lon, [modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]));
+      onProgress(Math.round(++done / total * 100));
+    }
+  }
 
   // Accumulate NDVI per DOY across years
   const doySum = new Array(365).fill(0), doyCnt = new Array(365).fill(0);
