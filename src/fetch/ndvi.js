@@ -21,11 +21,16 @@ export async function fetchModisBatch(lat, lon, dates) {
 
 export async function fetchModisNDVI(lat, lon, onProgress) {
   const years = [2019, 2020, 2021, 2022];
+  const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
+  const BATCH = 10; // API max
   const results = [];
-  for (let i = 0; i < years.length; i++) {
-    const y = years[i];
-    results.push(...await fetchModisBatch(lat, lon, [modisJulianKey(y, 1), modisJulianKey(y, 353)]));
-    onProgress(Math.round((i + 1) / years.length * 100));
+  let done = 0, total = years.length * Math.ceil(MODIS_DOYS.length / BATCH);
+  for (const y of years) {
+    for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
+      const batch = MODIS_DOYS.slice(i, i + BATCH);
+      results.push(...await fetchModisBatch(lat, lon, [modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]));
+      onProgress(Math.round(++done / total * 100));
+    }
   }
 
   // Accumulate NDVI per DOY across years

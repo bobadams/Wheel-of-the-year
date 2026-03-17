@@ -110,7 +110,7 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
     + `&kmAboveBelow=0&kmLeftRight=0`;
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(60_000) });
-    if (!r.ok) { const body = await r.text(); console.warn(`  MODIS ${startKey}–${endKey}: HTTP ${r.status}: ${body.slice(0, 300)}`); return []; }
+    if (!r.ok) { console.warn(`  MODIS ${startKey}–${endKey}: HTTP ${r.status}`); return []; }
     const d = await r.json();
     return (d.subset || [])
       .filter(s => s.band === '250m_16_days_NDVI')
@@ -131,23 +131,29 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
 }
 
 async function fetchModisNDVI(startYear, endYear) {
-  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (one request per year):\n`);
+  const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
+  const BATCH = 10; // API max
+  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (${BATCH}-date batches):\n`);
   const doySum = new Array(365).fill(0);
   const doyCnt = new Array(365).fill(0);
 
   for (let year = startYear; year <= endYear; year++) {
-    process.stdout.write(`  ${year}… `);
-    const results = await fetchModisBatch(julianKey(year, 1), julianKey(year, 353));
-    process.stdout.write(`${results.length} obs\n`);
-    results.forEach(({ date, value }) => {
-      const doy = dateToCalDOY(date);
-      if (doy < 0) return;
-      for (let dd = 0; dd < 16; dd++) {
-        const d2 = (doy + dd) % 365;
-        doySum[d2] += value;
-        doyCnt[d2]++;
-      }
-    });
+    process.stdout.write(`  ${year}: `);
+    for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
+      const batch = MODIS_DOYS.slice(i, i + BATCH);
+      const results = await fetchModisBatch(julianKey(year, batch[0]), julianKey(year, batch[batch.length - 1]));
+      process.stdout.write(results.length ? '.' : 'x');
+      results.forEach(({ date, value }) => {
+        const doy = dateToCalDOY(date);
+        if (doy < 0) return;
+        for (let dd = 0; dd < 16; dd++) {
+          const d2 = (doy + dd) % 365;
+          doySum[d2] += value;
+          doyCnt[d2]++;
+        }
+      });
+    }
+    process.stdout.write('\n');
   }
 
   // Build raw annual-average array
