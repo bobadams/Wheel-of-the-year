@@ -22,16 +22,31 @@ export async function fetchModisBatch(lat, lon, dates) {
 export async function fetchModisNDVI(lat, lon, onProgress) {
   const years = [2019, 2020, 2021, 2022];
   const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
-  const BATCH = 10; // API max
-  const results = [];
-  let done = 0, total = years.length * Math.ceil(MODIS_DOYS.length / BATCH);
+  const BATCH = 10; // API max per request
+  const CONCURRENCY = 5; // parallel requests
+
+  // Build flat task list
+  const tasks = [];
   for (const y of years) {
     for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
       const batch = MODIS_DOYS.slice(i, i + BATCH);
-      results.push(...await fetchModisBatch(lat, lon, [modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]));
-      onProgress(Math.round(++done / total * 100));
+      tasks.push([lat, lon, [modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]]);
     }
   }
+  const total = tasks.length;
+  let done = 0;
+  const results = [];
+  const active = new Set();
+  for (const [la, lo, dates] of tasks) {
+    const p = fetchModisBatch(la, lo, dates).then(r => {
+      active.delete(p);
+      results.push(...r);
+      onProgress(Math.round(++done / total * 100));
+    });
+    active.add(p);
+    if (active.size >= CONCURRENCY) await Promise.race(active);
+  }
+  await Promise.all(active);
 
   // Accumulate NDVI per DOY across years
   const doySum = new Array(365).fill(0), doyCnt = new Array(365).fill(0);

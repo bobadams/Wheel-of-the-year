@@ -135,17 +135,28 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
 
 async function fetchModisNDVI(startYear, endYear) {
   const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
-  const BATCH = 10; // API max
-  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (${BATCH}-date batches):\n`);
+  const BATCH = 10; // API max per request
+  const CONCURRENCY = 5; // parallel requests
   const doySum = new Array(365).fill(0);
   const doyCnt = new Array(365).fill(0);
 
+  // Build flat list of all batch tasks
+  const tasks = [];
   for (let year = startYear; year <= endYear; year++) {
-    process.stdout.write(`  ${year}: `);
     for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
       const batch = MODIS_DOYS.slice(i, i + BATCH);
-      const results = await fetchModisBatch(julianKey(year, batch[0]), julianKey(year, batch[batch.length - 1]));
+      tasks.push([julianKey(year, batch[0]), julianKey(year, batch[batch.length - 1])]);
+    }
+  }
+  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (${tasks.length} batches, concurrency ${CONCURRENCY}):\n`);
+
+  let done = 0;
+  const active = new Set();
+  for (const [startKey, endKey] of tasks) {
+    const p = fetchModisBatch(startKey, endKey).then(results => {
+      active.delete(p);
       process.stdout.write(results.length ? '.' : 'x');
+      if (++done % 13 === 0) process.stdout.write(` ${done}/${tasks.length}\n`);
       results.forEach(({ date, value }) => {
         const doy = dateToCalDOY(date);
         if (doy < 0) return;
@@ -155,9 +166,12 @@ async function fetchModisNDVI(startYear, endYear) {
           doyCnt[d2]++;
         }
       });
-    }
-    process.stdout.write('\n');
+    });
+    active.add(p);
+    if (active.size >= CONCURRENCY) await Promise.race(active);
   }
+  await Promise.all(active);
+  process.stdout.write('\n');
 
   // Build raw annual-average array
   let raw = doySum.map((s, i) => doyCnt[i] > 0 ? s / doyCnt[i] : null);
