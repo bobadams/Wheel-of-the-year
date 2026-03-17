@@ -5,7 +5,7 @@ function modisJulianKey(year, doy) {
 export async function fetchModisBatch(lat, lon, dates) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${lat}&longitude=${lon}&startDate=${dates[0]}&endDate=${dates[dates.length - 1]}`
-    + `&kmAboveBelow=1&kmLeftRight=1`;
+    + `&kmAboveBelow=0&kmLeftRight=0`;
   const r = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
   const d = await r.json();
