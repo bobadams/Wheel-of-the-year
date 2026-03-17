@@ -140,7 +140,7 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
   // Gaussian smoothing to remove 16-day staircase artifacts
   const sigma = 7, kernelR = 14;
   const gauss = x => Math.exp(-0.5 * (x / sigma) ** 2);
-  return raw.map((_, i) => {
+  const ndvi = raw.map((_, i) => {
     let sum = 0, wt = 0;
     for (let k = -kernelR; k <= kernelR; k++) {
       const j = (i + k + 365) % 365;
@@ -148,6 +148,7 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
     }
     return Math.round((wt > 0 ? sum / wt : 0) * 1000) / 1000;
   });
+  return { ndvi, sampLat, sampLon };
 }
 
 export function ndviProxyFallback(tempArr, rainArr) {
