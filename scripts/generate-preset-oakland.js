@@ -19,8 +19,13 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const LAT  = 37.8;
-const LON  = -122.2;
+// Oakland hills (Redwood Regional Park / Joaquin Miller area).
+// The original 37.8°N, -122.2°W pixel was dominated by evergreen tree canopy
+// (live oaks, eucalyptus) — NDVI ~0.39 year-round with no seasonal signal.
+// Moving ~3km east into the grass-covered hillsides captures Oakland's
+// Mediterranean wet-season green / dry-season brown cycle.
+const LAT  = 37.83;
+const LON  = -122.17;
 const NAME = 'Oakland, California';
 
 const DIM = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -256,7 +261,7 @@ async function main() {
       meta: {
         temp:     { sourceInterval: 'daily',      source: 'ERA5 archive 1991–2020', years: '1991–2020' },
         rain:     { sourceInterval: 'daily',      source: 'ERA5 archive 1991–2020', years: '1991–2020' },
-        daylight: { sourceInterval: 'calculated', source: 'astronomical (lat 37.8°)', years: 'exact' },
+        daylight: { sourceInterval: 'calculated', source: 'astronomical (lat 37.83°)', years: 'exact' },
         ndvi:     { sourceInterval: '16-day',     source: 'MODIS MOD13Q1 2010–2022', years: '2010–2022' },
         wind:     { sourceInterval: 'daily',      source: 'ERA5 archive 1991–2020', years: '1991–2020' },
       },
@@ -268,6 +273,7 @@ async function main() {
 //   ERA5: Open-Meteo archive API, daily, 1991-01-01 – 2020-12-31
 //   NDVI: MODIS MOD13Q1 (250m 16-day), ORNL DAAC, 2010-2022
 //   Daylight: astronomical calculation for lat ${LAT}°
+// Coordinates: ${LAT}°N, ${LON}°W (Oakland hills — grass-covered for seasonal signal)
 // Generated: ${new Date().toISOString()}\n\n`;
 
   const out = header
