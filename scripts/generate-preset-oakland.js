@@ -131,24 +131,24 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
 }
 
 async function fetchModisNDVI(startYear, endYear) {
-  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} in single request… `);
-  const startKey = julianKey(startYear, 1);
-  const endKey   = julianKey(endYear, 353);
-  const results  = await fetchModisBatch(startKey, endKey);
-  process.stdout.write(`got ${results.length} observations.\n`);
-
+  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (one request per year):\n`);
   const doySum = new Array(365).fill(0);
   const doyCnt = new Array(365).fill(0);
 
-  results.forEach(({ date, value }) => {
-    const doy = dateToCalDOY(date);
-    if (doy < 0) return;
-    for (let dd = 0; dd < 16; dd++) {
-      const d2 = (doy + dd) % 365;
-      doySum[d2] += value;
-      doyCnt[d2]++;
-    }
-  });
+  for (let year = startYear; year <= endYear; year++) {
+    process.stdout.write(`  ${year}… `);
+    const results = await fetchModisBatch(julianKey(year, 1), julianKey(year, 353));
+    process.stdout.write(`${results.length} obs\n`);
+    results.forEach(({ date, value }) => {
+      const doy = dateToCalDOY(date);
+      if (doy < 0) return;
+      for (let dd = 0; dd < 16; dd++) {
+        const d2 = (doy + dd) % 365;
+        doySum[d2] += value;
+        doyCnt[d2]++;
+      }
+    });
+  }
 
   // Build raw annual-average array
   let raw = doySum.map((s, i) => doyCnt[i] > 0 ? s / doyCnt[i] : null);
