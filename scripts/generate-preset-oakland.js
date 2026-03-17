@@ -118,7 +118,7 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
     return (d.subset || [])
       .filter(s => s.band === '250m_16_days_NDVI')
       .map(row => {
-        const vals = row.data.map(v => v * row.scale).filter(v => v > -0.2 && v <= 1.0);
+        const vals = row.data.map(v => v * (row.scale ?? 0.0001)).filter(v => v > -0.2 && v <= 1.0);
         if (!vals.length) return null;
         return { date: row.calendar_date, value: vals.reduce((a, b) => a + b, 0) / vals.length };
       })
