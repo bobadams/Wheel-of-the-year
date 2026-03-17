@@ -148,7 +148,8 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
     }
     return Math.round((wt > 0 ? sum / wt : 0) * 1000) / 1000;
   });
-  return { ndvi, sampLat, sampLon };
+  const sampMapUrl = `https://www.google.com/maps?q=${sampLat.toFixed(5)},${sampLon.toFixed(5)}`;
+  return { ndvi, sampLat, sampLon, sampMapUrl };
 }
 
 export function ndviProxyFallback(tempArr, rainArr) {

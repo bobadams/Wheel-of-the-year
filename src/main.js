@@ -77,9 +77,9 @@ async function fetchCity() {
 
     setStatus('loading', 'Normals loaded — fetching MODIS NDVI…');
     setNdviProgress(true, 0, 'Fetching MODIS satellite data…');
-    let ndvi, ndviSampLat = geo.lat, ndviSampLon = geo.lon;
+    let ndvi, ndviSampLat = geo.lat, ndviSampLon = geo.lon, ndviSampMapUrl = null;
     try {
-      ({ ndvi, sampLat: ndviSampLat, sampLon: ndviSampLon } = await fetchModisNDVI(geo.lat, geo.lon, pct => setNdviProgress(true, pct, `MODIS NDVI: ${pct}%…`)));
+      ({ ndvi, sampLat: ndviSampLat, sampLon: ndviSampLon, sampMapUrl: ndviSampMapUrl } = await fetchModisNDVI(geo.lat, geo.lon, pct => setNdviProgress(true, pct, `MODIS NDVI: ${pct}%…`)));
     } catch {
       ndvi = ndviProxyFallback(climate.tempF, climate.rainIn);
     }
@@ -89,7 +89,7 @@ async function fetchCity() {
       name: shortName, lat: geo.lat, lon: geo.lon,
       temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
       ndvi, wind: climate.windMph,
-      ndviSampLat, ndviSampLon,
+      ndviSampLat, ndviSampLon, ndviSampMapUrl,
       resolution: climate.resolution,
       ndviSource: ndvi ? 'MODIS 2019–2022' : 'proxy',
       meta: {
