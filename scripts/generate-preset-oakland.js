@@ -112,6 +112,9 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
     const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(60_000) });
     if (!r.ok) { console.warn(`  MODIS ${startKey}–${endKey}: HTTP ${r.status}`); return []; }
     const d = await r.json();
+    if (!d.subset?.length) { console.warn(`  no subset rows for ${startKey}–${endKey}`); return []; }
+    const bands = [...new Set(d.subset.map(s => s.band))];
+    if (!d.subset.some(s => s.band === '250m_16_days_NDVI')) console.warn(`  band not found. Available: ${bands.join(', ')}`);
     return (d.subset || [])
       .filter(s => s.band === '250m_16_days_NDVI')
       .map(row => {
