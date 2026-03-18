@@ -43,6 +43,7 @@ export function buildRingControls() {
           <span class="misc-label">Smoothing</span>
           <button class="toggle ${s.smooth ? 'on' : ''}" data-id="${id}" data-action="toggleSmooth"></button>
         </div>
+        ${id === 'ndvi' ? `<div class="misc-row" style="padding-left:1.3rem"><a id="ndvi-map-link" href="" target="_blank" style="display:none;font-size:.75rem">View sampled pixel on map</a></div>` : ''}
       </div>`;
 
     // Drag-to-reorder
@@ -84,6 +85,16 @@ export function refreshSourceBadges() {
       el.title = '';
     }
   });
+
+  const mapLink = document.getElementById('ndvi-map-link');
+  if (mapLink) {
+    if (currentData.ndviSampMapUrl) {
+      mapLink.href = currentData.ndviSampMapUrl;
+      mapLink.style.display = '';
+    } else {
+      mapLink.style.display = 'none';
+    }
+  }
 }
 
 function handleControlClick(e) {
