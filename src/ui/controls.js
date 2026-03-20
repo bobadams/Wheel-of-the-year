@@ -39,6 +39,11 @@ export function buildRingControls() {
           <span class="slider-val" id="sv-opac-${id}">${Math.round(s.opacity * 100)}%</span>
         </div>
         <div class="color-row"><label>Color</label><input type="color" value="${s.color}" data-id="${id}" data-action="color"></div>
+        <div class="misc-row" style="padding-left:1.3rem">
+          <span class="misc-label">Smoothing</span>
+          <button class="toggle ${s.smooth ? 'on' : ''}" data-id="${id}" data-action="toggleSmooth"></button>
+        </div>
+        ${id === 'ndvi' ? `<div class="misc-row" style="padding-left:1.3rem"><a id="ndvi-map-link" href="" target="_blank" style="display:none;font-size:.75rem">View sampled pixel on map</a></div>` : ''}
       </div>`;
 
     // Drag-to-reorder
@@ -80,6 +85,16 @@ export function refreshSourceBadges() {
       el.title = '';
     }
   });
+
+  const mapLink = document.getElementById('ndvi-map-link');
+  if (mapLink) {
+    if (currentData.ndviSampMapUrl) {
+      mapLink.href = currentData.ndviSampMapUrl;
+      mapLink.style.display = '';
+    } else {
+      mapLink.style.display = 'none';
+    }
+  }
 }
 
 function handleControlClick(e) {
@@ -89,6 +104,8 @@ function handleControlClick(e) {
   }
   const toggle = e.target.closest('[data-action="toggleRing"]');
   if (toggle) { toggleRing(toggle); return; }
+  const smoothBtn = e.target.closest('[data-action="toggleSmooth"]');
+  if (smoothBtn) { toggleSmooth(smoothBtn); return; }
 }
 
 function handleControlInput(e) {
@@ -121,6 +138,13 @@ function updateRing(id, prop, val) {
   val = parseFloat(val); ringState[id][prop] = val;
   if (prop === 'thickness') document.getElementById(`sv-thick-${id}`).textContent = val.toFixed(1) + '×';
   if (prop === 'opacity')   document.getElementById(`sv-opac-${id}`).textContent  = Math.round(val * 100) + '%';
+  _draw?.();
+}
+
+function toggleSmooth(btn) {
+  const id = btn.dataset.id;
+  ringState[id].smooth = !ringState[id].smooth;
+  btn.classList.toggle('on', ringState[id].smooth);
   _draw?.();
 }
 
