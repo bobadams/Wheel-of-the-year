@@ -1,5 +1,3 @@
-import { DIM } from '../draw/decorations.js';
-
 Math.radians = deg => deg * Math.PI / 180;
 
 export async function geocode(q) {
@@ -15,7 +13,7 @@ export async function geocode(q) {
 export async function fetchClimateAPI(lat, lon) {
   const url = `https://climate-api.open-meteo.com/v1/climate?latitude=${lat}&longitude=${lon}`
     + `&start_date=1991-01-01&end_date=2020-12-31&models=ERA5`
-    + `&monthly=temperature_2m_mean,precipitation_sum,windspeed_10m_mean`;
+    + `&daily=temperature_2m_mean,precipitation_sum,windspeed_10m_mean`;
   const r = await fetch(url);
   if (!r.ok) throw new Error('Climate API error');
   return r.json();
@@ -32,43 +30,38 @@ export function daylightDaily(lat) {
   });
 }
 
+// Returns 0-based DOY (0–364), skipping Feb 29. Returns null for Feb 29.
+function dateToDoy(dateStr) {
+  const [, m, d] = dateStr.split('-').map(Number);
+  if (m === 2 && d === 29) return null;
+  const dim = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  let doy = d - 1;
+  for (let i = 1; i < m; i++) doy += dim[i];
+  return doy;
+}
+
 export function aggregateClimate(d, lat) {
-  const { time, temperature_2m_mean: tempC, precipitation_sum: precMM, windspeed_10m_mean: windKmh } = d.monthly;
-  const ts = new Array(12).fill(0), tc = new Array(12).fill(0);
-  const rs = new Array(12).fill(0), ws = new Array(12).fill(0), wc = new Array(12).fill(0);
+  const { time, temperature_2m_mean: tempC, precipitation_sum: precMM, windspeed_10m_mean: windKmh } = d.daily;
+  const ts = new Array(365).fill(0), tc = new Array(365).fill(0);
+  const rs = new Array(365).fill(0);
+  const ws = new Array(365).fill(0), wc = new Array(365).fill(0);
   time.forEach((t, i) => {
-    const m = parseInt(t.split('-')[1]) - 1;
-    if (tempC[i]   != null) { ts[m] += tempC[i];   tc[m]++; }
-    if (precMM[i]  != null)   rs[m] += precMM[i];
-    if (windKmh[i] != null) { ws[m] += windKmh[i]; wc[m]++; }
+    const doy = dateToDoy(t);
+    if (doy === null) return;
+    if (tempC[i]   != null) { ts[doy] += tempC[i];   tc[doy]++; }
+    if (precMM[i]  != null)   rs[doy] += precMM[i];
+    if (windKmh[i] != null) { ws[doy] += windKmh[i]; wc[doy]++; }
   });
   const cnt = n => Math.max(n, 1);
-  const tempFmon = ts.map((s, i) => Math.round((s / cnt(tc[i]) * 9 / 5 + 32) * 10) / 10);
-  const rainMon  = rs.map((s, i) => Math.round(s / cnt(tc[i]) / 25.4 * 100) / 100);
-  const windMon  = ws.map((s, i) => Math.round(s / cnt(wc[i]) * .621371 * 10) / 10);
-
-  function monthlyToDaily(monthly) {
-    const mids = []; let doy = 0;
-    DIM.forEach(d => { mids.push(doy + d / 2); doy += d; });
-    const ext  = [...mids.map(m => m - 365), ...mids, ...mids.map(m => m + 365)];
-    const extV = [...monthly, ...monthly, ...monthly];
-    return Array.from({ length: 365 }, (_, day) => {
-      for (let i = 0; i < ext.length - 1; i++) {
-        if (ext[i] <= day && day < ext[i + 1]) {
-          const t = (day - ext[i]) / (ext[i + 1] - ext[i]);
-          const ts = (1 - Math.cos(t * Math.PI)) / 2;
-          return Math.round((extV[i] * (1 - ts) + extV[i + 1] * ts) * 100) / 100;
-        }
-      }
-      return monthly[0];
-    });
-  }
+  const tempF  = ts.map((s, i) => Math.round((s / cnt(tc[i]) * 9 / 5 + 32) * 10) / 10);
+  const rainIn = rs.map((s, i) => Math.round(s / cnt(tc[i]) / 25.4 * 100) / 100);
+  const windMph = ws.map((s, i) => Math.round(s / cnt(wc[i]) * 0.621371 * 10) / 10);
 
   return {
-    tempF:   monthlyToDaily(tempFmon),
-    rainIn:  monthlyToDaily(rainMon),
-    windMph: monthlyToDaily(windMon),
+    tempF,
+    rainIn,
+    windMph,
     daylight: daylightDaily(lat),
-    resolution: 'daily (ERA5 1991–2020 normals)',
+    resolution: 'daily (ERA5 1991–2020)',
   };
 }

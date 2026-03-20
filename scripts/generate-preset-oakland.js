@@ -185,6 +185,36 @@ async function fetchModisNDVI(startYear, endYear) {
   }
   await Promise.all(active);
   process.stdout.write('\n');
+async function fetchModisNDVI(startYear, endYear) {
+  const startKey = `A${startYear}001`;
+  const endKey   = `A${endYear}353`;
+  process.stdout.write(`Fetching MODIS NDVI ${startYear}–${endYear} (single request, 4km box)… `);
+  const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
+    + `latitude=${LAT}&longitude=${LON}`
+    + `&startDate=${startKey}&endDate=${endKey}`
+    + `&kmAboveBelow=2&kmLeftRight=2`;
+  const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(120_000) });
+  if (!r.ok) throw new Error(`MODIS HTTP ${r.status}: ${await r.text()}`);
+  const d = await r.json();
+  process.stdout.write('done.\n');
+
+  const doySum = new Array(365).fill(0);
+  const doyCnt = new Array(365).fill(0);
+
+  (d.subset || [])
+    .filter(s => s.band === '250m_16_days_NDVI')
+    .forEach(row => {
+      const vals = row.data.map(v => v * row.scale).filter(v => v > -0.2 && v <= 1.0);
+      if (!vals.length) return;
+      const value = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const doy = dateToCalDOY(row.calendar_date);
+      if (doy < 0) return;
+      for (let dd = 0; dd < 16; dd++) {
+        const d2 = (doy + dd) % 365;
+        doySum[d2] += value;
+        doyCnt[d2]++;
+      }
+    });
 
   // Build raw annual-average array
   let raw = doySum.map((s, i) => doyCnt[i] > 0 ? s / doyCnt[i] : null);
