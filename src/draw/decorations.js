@@ -12,14 +12,16 @@ export function drawMoon() {
   const { ctx, W, CX, CY } = canvas;
   const r = W * .430, dr = W * .009;
   ctx.save();
+  // +0.5 centers each marker on the middle of its day's arc, matching the
+  // convention used by min/max, today-dot, and actuals overlays.
   MOON_FULL.forEach(d => {
-    const a = doy2angle(d);
+    const a = doy2angle(d + 0.5);
     const [x, y] = polar(CX, CY, a, r);
     ctx.beginPath(); ctx.arc(x, y, dr, 0, Math.PI * 2);
     ctx.fillStyle = '#8e7cc3'; ctx.globalAlpha = .85; ctx.fill();
   });
   MOON_NEW.forEach(d => {
-    const a = doy2angle(d);
+    const a = doy2angle(d + 0.5);
     const [x, y] = polar(CX, CY, a, r);
     ctx.beginPath(); ctx.arc(x, y, dr * .65, 0, Math.PI * 2);
     ctx.strokeStyle = '#8e7cc3'; ctx.lineWidth = 1.2; ctx.globalAlpha = .6; ctx.stroke();
@@ -56,9 +58,18 @@ export function drawTicks() {
 export function drawAxes() {
   const { ctx, W, CX, CY } = canvas;
   const R = W * .485;
+  // Cardinal-point DOYs use +0.5 so the axis line passes through the *center*
+  // of each solstice/equinox day (matching the ring arc convention) and so the
+  // winter-solstice endpoint (d=353.5) lands exactly on the top of the wheel
+  // defined by SOLSTICE_OFFSET. Paired endpoints are 182.5 days apart, so each
+  // line is exactly a diameter through the center.
+  const WINTER = 353.5; // Dec 20 midday
+  const SUMMER = 171.0; // opposite of WINTER on a 365-day wheel
+  const SPRING =  79.75; // perpendicular to solstice axis (≈ Mar 20 evening)
+  const AUTUMN = 262.25; // perpendicular to solstice axis (≈ Sep 19 evening)
   ctx.save();
   ctx.strokeStyle = '#2c2416'; ctx.lineWidth = .8; ctx.globalAlpha = .28; ctx.setLineDash([3, 4]);
-  [[172, 355], [79, 265]].forEach(([a, b]) => {
+  [[SUMMER, WINTER], [SPRING, AUTUMN]].forEach(([a, b]) => {
     const [ax, ay] = polar(CX, CY, doy2angle(a), R);
     const [bx, by] = polar(CX, CY, doy2angle(b), R);
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
@@ -68,11 +79,13 @@ export function drawAxes() {
   ctx.font = `italic ${W * .019}px 'Crimson Pro',serif`;
   ctx.fillStyle = '#2c2416'; ctx.globalAlpha = .48; ctx.textAlign = 'center';
   const ld = R + W * .038;
+  // Label positions use mid-day of the conventional astronomical date so the
+  // text reads cleanly; they're close to (not exactly on) the axis lines.
   [
-    { doy: 172, t: 'Summer\nSolstice' },
-    { doy: 355, t: 'Winter\nSolstice' },
-    { doy: 79,  t: 'Spring\nEquinox'  },
-    { doy: 265, t: 'Autumn\nEquinox'  },
+    { doy: 170.5, t: 'Summer\nSolstice' }, // Jun 20 midday
+    { doy: 353.5, t: 'Winter\nSolstice' }, // Dec 20 midday — exactly on vertical axis
+    { doy:  78.5, t: 'Spring\nEquinox'  }, // Mar 20 midday
+    { doy: 264.5, t: 'Autumn\nEquinox'  }, // Sep 22 midday
   ].forEach(({ doy, t }) => {
     const [lx, ly] = polar(CX, CY, doy2angle(doy), ld);
     t.split('\n').forEach((line, li, arr) =>

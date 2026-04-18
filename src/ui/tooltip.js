@@ -1,6 +1,6 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { canvas, ringOrder, ringState, displayState, currentData, actuals } from '../state.js';
-import { doy2angle, norm } from '../draw/canvas.js';
+import { angle2doy, norm } from '../draw/canvas.js';
 import { DIM, MON_S } from '../draw/decorations.js';
 
 const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', ndvi: '🌿', wind: '💨' };
@@ -18,9 +18,11 @@ export function setupTooltip() {
     const r = Math.sqrt(dx * dx + dy * dy);
     if (r < canvas.W * .055 || r > canvas.W * .455) { tip.style.display = 'none'; return; }
 
-    let frac = (Math.atan2(dy, dx) + Math.PI / 2) / (2 * Math.PI);
-    if (frac < 0) frac += 1;
-    const doy = Math.min(364, Math.floor(frac * 365));
+    // Convert mouse angle to DOY using the same SOLSTICE_OFFSET that doy2angle
+    // uses, so the tooltip date always matches the ring arc under the cursor.
+    // (Previously hardcoded +π/2, which assumed Jan 1 was at the top and drifted
+    //  from the rendering once the solstice offset was introduced.)
+    const doy = Math.min(364, Math.floor(angle2doy(Math.atan2(dy, dx))));
 
     let acc = 0, m = 0;
     for (let i = 0; i < 12; i++) { if (acc + DIM[i] > doy) { m = i; break; } acc += DIM[i]; }
