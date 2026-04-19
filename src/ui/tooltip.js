@@ -1,6 +1,6 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { canvas, ringOrder, ringState, displayState, currentData, actuals } from '../state.js';
-import { doy2angle, norm } from '../draw/canvas.js';
+import { doy2angle, norm, SOLSTICE_OFFSET } from '../draw/canvas.js';
 import { DIM, MON_S } from '../draw/decorations.js';
 
 const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', ndvi: '🌿', wind: '💨' };
@@ -18,8 +18,8 @@ export function setupTooltip() {
     const r = Math.sqrt(dx * dx + dy * dy);
     if (r < canvas.W * .055 || r > canvas.W * .455) { tip.style.display = 'none'; return; }
 
-    let frac = (Math.atan2(dy, dx) + Math.PI / 2) / (2 * Math.PI);
-    if (frac < 0) frac += 1;
+    let frac = (Math.atan2(dy, dx) - SOLSTICE_OFFSET) / (2 * Math.PI);
+    frac = ((frac % 1) + 1) % 1;
     const doy = Math.min(364, Math.floor(frac * 365));
 
     let acc = 0, m = 0;

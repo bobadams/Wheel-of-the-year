@@ -58,7 +58,7 @@ export function drawAxes() {
   const R = W * .485;
   ctx.save();
   ctx.strokeStyle = '#2c2416'; ctx.lineWidth = .8; ctx.globalAlpha = .28; ctx.setLineDash([3, 4]);
-  [[172, 355], [79, 265]].forEach(([a, b]) => {
+  [[171, 354], [78, 264]].forEach(([a, b]) => {
     const [ax, ay] = polar(CX, CY, doy2angle(a), R);
     const [bx, by] = polar(CX, CY, doy2angle(b), R);
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
@@ -69,10 +69,10 @@ export function drawAxes() {
   ctx.fillStyle = '#2c2416'; ctx.globalAlpha = .48; ctx.textAlign = 'center';
   const ld = R + W * .038;
   [
-    { doy: 172, t: 'Summer\nSolstice' },
-    { doy: 355, t: 'Winter\nSolstice' },
-    { doy: 79,  t: 'Spring\nEquinox'  },
-    { doy: 265, t: 'Autumn\nEquinox'  },
+    { doy: 171, t: 'Summer\nSolstice' },
+    { doy: 354, t: 'Winter\nSolstice' },
+    { doy: 78,  t: 'Spring\nEquinox'  },
+    { doy: 264, t: 'Autumn\nEquinox'  },
   ].forEach(({ doy, t }) => {
     const [lx, ly] = polar(CX, CY, doy2angle(doy), ld);
     t.split('\n').forEach((line, li, arr) =>
