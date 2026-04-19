@@ -8,16 +8,11 @@ export const ringOrder = ['temp', 'rain', 'daylight', 'ndvi', 'wind'];
 // Per-ring UI state
 export const ringState = {};
 RING_DEFS.forEach(r => {
-  ringState[r.id] = { visible: true, color: r.color, thickness: 1.0, opacity: .82, smooth: true };
+  ringState[r.id] = { visible: true, color: r.color, thickness: 1.0, opacity: 1.0, smooth: true, normMode: r.defaultNormMode };
 });
 
 // Global display toggles
-export const displayState = { moon: true, axis: true, ticks: true, actuals: true, windBarbs: false, normMode: 'fixed' };
-
-// Currently displayed climate data
-export let currentData = PRESETS[0].data;
-export let activePreset = 'Oakland';
-export let smoothedData = precomputeSmoothed(PRESETS[0].data);
+export const displayState = { moon: true, axis: true, ticks: true, actuals: true, windBarbs: false, ringGap: 0.010 };
 
 function precomputeSmoothed(data) {
   const out = {};
@@ -26,6 +21,11 @@ function precomputeSmoothed(data) {
   });
   return out;
 }
+
+// Currently displayed climate data
+export let currentData = PRESETS[0].data;
+export let activePreset = 'Oakland';
+export let smoothedData = precomputeSmoothed(PRESETS[0].data);
 
 export function setCurrentData(data) {
   currentData = data;

@@ -26,17 +26,18 @@ import { setupTooltip } from './ui/tooltip.js';
 function draw() {
   const { ctx, W, H, CX, CY } = canvas;
   const layouts = computeRingLayouts();
-  const normBounds = computeNormBounds(currentData, displayState.normMode);
+  const normBounds = computeNormBounds(currentData);
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#faf7f2'; ctx.fillRect(0, 0, W, H);
 
   ringOrder.forEach(id => {
     const s = ringState[id];
     if (!s.visible || !layouts[id]) return;
+    const r = RING_DEFS.find(r => r.id === id);
     const { innerFrac, thickFrac } = layouts[id];
     const ringData = s.smooth && smoothedData[id] ? smoothedData[id] : currentData[id];
     const { lo, hi } = normBounds[id];
-    drawRing(ringData, lo, hi, innerFrac * W, thickFrac * W, s.color, s.opacity);
+    drawRing(ringData, lo, hi, innerFrac * W, thickFrac * W, s.color, s.opacity, r.blankZero, currentData[id]);
   });
 
   // Outer decorative circles
@@ -82,8 +83,11 @@ async function fetchCity() {
     setStatus('loading', 'Normals loaded — fetching MODIS NDVI…');
     setNdviProgress(true, 0, 'Fetching MODIS satellite data…');
     let ndvi, ndviSampLat = geo.lat, ndviSampLon = geo.lon, ndviSampMapUrl = null;
+    let ndviPeakKey = null, ndviTroughKey = null;
     try {
-      ({ ndvi, sampLat: ndviSampLat, sampLon: ndviSampLon, sampMapUrl: ndviSampMapUrl } = await fetchModisNDVI(geo.lat, geo.lon, pct => setNdviProgress(true, pct, `MODIS NDVI: ${pct}%…`)));
+      ({ ndvi, sampLat: ndviSampLat, sampLon: ndviSampLon, sampMapUrl: ndviSampMapUrl,
+         peakKey: ndviPeakKey, troughKey: ndviTroughKey,
+       } = await fetchModisNDVI(geo.lat, geo.lon, pct => setNdviProgress(true, pct, `MODIS NDVI: ${pct}%…`)));
     } catch {
       ndvi = ndviProxyFallback(climate.tempF, climate.rainIn);
     }
@@ -94,6 +98,7 @@ async function fetchCity() {
       temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
       ndvi, wind: climate.windMph, windDir: climate.windDir,
       ndviSampLat, ndviSampLon, ndviSampMapUrl,
+      ndviPeakKey, ndviTroughKey,
       resolution: climate.resolution,
       ndviSource: ndvi ? 'MODIS 2019–2022' : 'proxy',
       meta: {

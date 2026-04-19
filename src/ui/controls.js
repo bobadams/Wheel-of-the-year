@@ -1,6 +1,7 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { ringOrder, ringState, displayState, currentData } from '../state.js';
 import { rebuildLegend } from './legend.js';
+import { showNdviAnalysis } from './ndviAnalysis.js';
 
 // draw is passed in to avoid a circular dependency (main.js owns draw)
 let _draw = null;
@@ -10,7 +11,6 @@ const NORM_MODES = [
   { id: 'fixed',      label: 'Fixed',      title: 'Fixed global scale — compare across cities' },
   { id: 'minmax',     label: 'Min/Max',    title: "Stretched to each ring's actual min and max" },
   { id: 'percentile', label: 'Percentile', title: 'Stretched to 5th–95th percentile, clipping outliers' },
-  { id: 'zscore',     label: 'Std Dev',    title: 'Scaled by standard deviation — zero stays at zero' },
 ];
 
 export function buildRingControls() {
@@ -18,22 +18,23 @@ export function buildRingControls() {
   c.innerHTML = '';
   c.style.cssText = 'display:flex;flex-direction:column;gap:0';
 
-  // Normalization mode selector
-  const normDiv = document.createElement('div');
-  normDiv.className = 'norm-section';
-  normDiv.innerHTML = `
-    <div class="panel-title" style="margin-bottom:.45rem">Normalization</div>
-    <div class="norm-btn-group" id="normBtnGroup">
-      ${NORM_MODES.map(m => `<button class="norm-btn${displayState.normMode === m.id ? ' active' : ''}" data-norm="${m.id}" title="${m.title}">${m.label}</button>`).join('')}
+
+  // Ring gap slider
+  const gapDiv = document.createElement('div');
+  gapDiv.className = 'norm-section';
+  gapDiv.style.marginTop = '.5rem';
+  gapDiv.innerHTML = `
+    <div class="slider-row">
+      <span class="panel-title" style="margin:0">Ring Gap</span>
+      <input id="ringGapSlider" type="range" min="0" max="0.03" step="0.001" value="${displayState.ringGap}" style="flex:1;margin:0 .5rem">
+      <span id="ringGapVal" style="min-width:2.5rem;text-align:right;font-size:.8rem">${Math.round(displayState.ringGap * 1000)}px</span>
     </div>`;
-  normDiv.addEventListener('click', e => {
-    const btn = e.target.closest('[data-norm]');
-    if (!btn) return;
-    displayState.normMode = btn.dataset.norm;
-    normDiv.querySelectorAll('.norm-btn').forEach(b => b.classList.toggle('active', b.dataset.norm === displayState.normMode));
+  gapDiv.querySelector('#ringGapSlider').addEventListener('input', e => {
+    displayState.ringGap = parseFloat(e.target.value);
+    gapDiv.querySelector('#ringGapVal').textContent = Math.round(displayState.ringGap * 1000) + 'px';
     _draw?.();
   });
-  c.appendChild(normDiv);
+  c.appendChild(gapDiv);
 
   const divider = document.createElement('hr');
   divider.className = 'divider';
@@ -62,8 +63,7 @@ export function buildRingControls() {
           <input type="range" min=".2" max="2.5" step=".05" value="${s.thickness}" data-id="${id}" data-prop="thickness">
           <span class="slider-val" id="sv-thick-${id}">${s.thickness.toFixed(1)}×</span>
         </div>
-        <div class="slider-row">
-          <span class="slider-label">Opacity</span>
+        <div class="slider-row" style="display:none">
           <input type="range" min=".1" max="1" step=".05" value="${s.opacity}" data-id="${id}" data-prop="opacity">
           <span class="slider-val" id="sv-opac-${id}">${Math.round(s.opacity * 100)}%</span>
         </div>
@@ -71,6 +71,12 @@ export function buildRingControls() {
         <div class="misc-row" style="padding-left:1.3rem">
           <span class="misc-label">Smoothing</span>
           <button class="toggle ${s.smooth ? 'on' : ''}" data-id="${id}" data-action="toggleSmooth"></button>
+        </div>
+        <div class="misc-row" style="padding-left:1.3rem;align-items:center;gap:.3rem">
+          <span class="misc-label">Scale</span>
+          <div class="norm-btn-group" style="flex:1">
+            ${NORM_MODES.map(m => `<button class="norm-btn${s.normMode === m.id ? ' active' : ''}" data-id="${id}" data-norm="${m.id}" title="${m.title}">${m.label}</button>`).join('')}
+          </div>
         </div>
         ${id === 'ndvi' ? `<div class="misc-row" style="padding-left:1.3rem"><a id="ndvi-map-link" href="" target="_blank" style="display:none;font-size:.75rem">View sampled pixel on map</a></div>` : ''}
       </div>`;
@@ -117,9 +123,17 @@ export function refreshSourceBadges() {
 
   const mapLink = document.getElementById('ndvi-map-link');
   if (mapLink) {
-    if (currentData.ndviSampMapUrl) {
-      mapLink.href = currentData.ndviSampMapUrl;
+    const sampLat = currentData.meta?.ndvi?.sampLat;
+    const sampLon = currentData.meta?.ndvi?.sampLon;
+    const hasPx = sampLat != null && sampLon != null;
+    if (hasPx) {
+      mapLink.textContent = `reference location: ${sampLat.toFixed(4)}, ${sampLon.toFixed(4)}`;
+      mapLink.href = '#';
       mapLink.style.display = '';
+      // Replace listener each time badges are refreshed (avoid duplicates)
+      const fresh = mapLink.cloneNode(true);
+      mapLink.parentNode.replaceChild(fresh, mapLink);
+      fresh.addEventListener('click', e => { e.preventDefault(); showNdviAnalysis(); });
     } else {
       mapLink.style.display = 'none';
     }
@@ -135,6 +149,14 @@ function handleControlClick(e) {
   if (toggle) { toggleRing(toggle); return; }
   const smoothBtn = e.target.closest('[data-action="toggleSmooth"]');
   if (smoothBtn) { toggleSmooth(smoothBtn); return; }
+  const normBtn = e.target.closest('[data-norm][data-id]');
+  if (normBtn) {
+    const { id, norm } = normBtn.dataset;
+    ringState[id].normMode = norm;
+    normBtn.closest('.norm-btn-group').querySelectorAll('.norm-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.norm === norm));
+    _draw?.(); return;
+  }
 }
 
 function handleControlInput(e) {

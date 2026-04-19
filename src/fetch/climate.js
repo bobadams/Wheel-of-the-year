@@ -13,7 +13,7 @@ export async function geocode(q) {
 export async function fetchClimateAPI(lat, lon) {
   const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}`
     + `&start_date=1991-01-01&end_date=2020-12-31&timezone=UTC`
-    + `&daily=temperature_2m_mean,precipitation_sum,windspeed_10m_mean,winddirection_10m_dominant`;
+    + `&daily=temperature_2m_max,precipitation_sum,windspeed_10m_mean,winddirection_10m_dominant`;
   const r = await fetch(url);
   if (!r.ok) throw new Error('Climate API error');
   return r.json();
@@ -43,7 +43,7 @@ function dateToDoy(dateStr) {
 export function aggregateClimate(d, lat) {
   const {
     time,
-    temperature_2m_mean: tempC,
+    temperature_2m_max: tempC,
     precipitation_sum: precMM,
     windspeed_10m_mean: windKmh,
     winddirection_10m_dominant: windDirDeg,

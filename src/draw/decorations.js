@@ -69,7 +69,7 @@ export function drawAxes() {
   const AUTUMN = 262.25; // perpendicular to solstice axis (≈ Sep 19 evening)
   ctx.save();
   ctx.strokeStyle = '#2c2416'; ctx.lineWidth = .8; ctx.globalAlpha = .28; ctx.setLineDash([3, 4]);
-  [[171, 354], [78, 264]].forEach(([a, b]) => {
+  [[SUMMER, WINTER], [SPRING, AUTUMN]].forEach(([a, b]) => {
     const [ax, ay] = polar(CX, CY, doy2angle(a), R);
     const [bx, by] = polar(CX, CY, doy2angle(b), R);
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
@@ -79,13 +79,11 @@ export function drawAxes() {
   ctx.font = `italic ${W * .019}px 'Crimson Pro',serif`;
   ctx.fillStyle = '#2c2416'; ctx.globalAlpha = .48; ctx.textAlign = 'center';
   const ld = R + W * .038;
-  // Label positions use mid-day of the conventional astronomical date so the
-  // text reads cleanly; they're close to (not exactly on) the axis lines.
   [
-    { doy: 171, t: 'Summer\nSolstice' },
-    { doy: 354, t: 'Winter\nSolstice' },
-    { doy: 78,  t: 'Spring\nEquinox'  },
-    { doy: 264, t: 'Autumn\nEquinox'  },
+    { doy: SUMMER, t: 'Summer\nSolstice' },
+    { doy: WINTER, t: 'Winter\nSolstice' },
+    { doy: SPRING, t: 'Spring\nEquinox'  },
+    { doy: AUTUMN, t: 'Autumn\nEquinox'  },
   ].forEach(({ doy, t }) => {
     const [lx, ly] = polar(CX, CY, doy2angle(doy), ld);
     t.split('\n').forEach((line, li, arr) =>

@@ -2,10 +2,35 @@ function modisJulianKey(year, doy) {
   return `A${year}${String(doy).padStart(3, '0')}`;
 }
 
-export async function fetchModisBatch(lat, lon, startKey, endKey) {
+// Convert a calendar date string (YYYY-MM-DD) → MODIS Julian key
+function dateToModisKey(calendarDate) {
+  const [year, month, day] = calendarDate.split('-').map(Number);
+  const dims = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  let doy = day;
+  for (let m = 1; m < month; m++) doy += dims[m];
+  return modisJulianKey(year, doy);
+}
+
+// Fetch all 23 sixteen-day composites for a full year, spatially averaged over
+// a km×km radius around the given point.  km=0 returns the single 250m pixel;
+// km>0 averages over a (2km)×(2km) area of 250m pixels, which dilutes urban
+// signal and exposes the underlying regional seasonal pattern.
+export async function fetchAnnualSeries(lat, lon, year = 2022, km = 0) {
+  const start = modisJulianKey(year, 1);
+  const end   = modisJulianKey(year, 353);
+  try {
+    return await fetchModisBatch(lat, lon, start, end, km);
+  } catch {
+    return [];
+  }
+}
+
+// km: spatial half-extent in km; 0 = single 250m pixel (default, preserves
+// existing behaviour for the 10-year baseline fetch).
+export async function fetchModisBatch(lat, lon, startKey, endKey, km = 0) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${lat}&longitude=${lon}&startDate=${startKey}&endDate=${endKey}`
-    + `&kmAboveBelow=0&kmLeftRight=0`;
+    + `&kmAboveBelow=${km}&kmLeftRight=${km}`;
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
     if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
@@ -24,7 +49,7 @@ export async function fetchModisBatch(lat, lon, startKey, endKey) {
   }
 }
 
-async function fetchPixelGrid(lat, lon, dateKey, km) {
+export async function fetchPixelGrid(lat, lon, dateKey, km) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${lat}&longitude=${lon}`
     + `&startDate=${dateKey}&endDate=${dateKey}`
@@ -48,30 +73,66 @@ async function fetchPixelGrid(lat, lon, dateKey, km) {
 }
 
 // Find the pixel within 10 km with the greatest seasonal NDVI amplitude.
-// Uses two dates 6 months apart; abs(difference) works for both hemispheres.
-// Falls back to original coords if the API is unreachable or data is missing.
+//
+// Step 1 — fetch a full-year single-point time series at the city centre to
+//           determine the actual NDVI peak and trough composite dates for this
+//           location.  This works for any hemisphere or climate regime because
+//           we let the data tell us when the extremes occur rather than
+//           assuming NH summer/winter.
+//
+// Step 2 — fetch the 10 km × 10 km 250m pixel grid for those two dates and
+//           score every pixel by amplitude × mean NDVI, which down-weights
+//           water, pavement and seasonally-flooded pixels while rewarding
+//           persistent, seasonally-cycling canopy.
+//
+// Falls back gracefully to fixed dates / centre coordinates if any API call
+// fails.
 async function findSeasonalPixel(lat, lon) {
   const SCREEN_KM  = 10;
   const PIXEL_KM   = 0.25;
   const KM_PER_DEG = 111.0;
 
-  const [gridA, gridB] = await Promise.all([
-    fetchPixelGrid(lat, lon, 'A2022001', SCREEN_KM), // Jan 1  — NH winter trough / SH summer peak
-    fetchPixelGrid(lat, lon, 'A2022193', SCREEN_KM), // Jul 12 — NH summer peak   / SH winter trough
-  ]);
-  if (!gridA || !gridB) return { lat, lon };
+  // ── 1. Determine data-driven peak / trough dates ──────────────────────────
+  // Fallback: NH summer peak vs. NH winter trough (previous behaviour)
+  let peakKey   = 'A2022193'; // Jul 12
+  let troughKey = 'A2022001'; // Jan 1
 
-  const { nrows, ncols, pixels: pxA } = gridA;
-  const { pixels: pxB } = gridB;
+  // km=3 → 6×6 km spatial average: blends urban core with surrounding
+  // parks, suburbs and vegetation to get a representative seasonal signal.
+  const series = await fetchAnnualSeries(lat, lon, 2022, 3);
+  if (series.length >= 4) {
+    let maxVal = -Infinity, minVal = Infinity;
+    let maxDate = null,     minDate = null;
+    for (const { date, value } of series) {
+      if (value > maxVal) { maxVal = value; maxDate = date; }
+      if (value < minVal) { minVal = value; minDate = date; }
+    }
+    if (maxDate) peakKey   = dateToModisKey(maxDate);
+    if (minDate) troughKey = dateToModisKey(minDate);
+  }
+
+  // ── 2. Fetch 250m grids at those two dates ────────────────────────────────
+  const [gridPeak, gridTrough] = await Promise.all([
+    fetchPixelGrid(lat, lon, peakKey,   SCREEN_KM),
+    fetchPixelGrid(lat, lon, troughKey, SCREEN_KM),
+  ]);
+  if (!gridPeak || !gridTrough) return { lat, lon, peakKey, troughKey };
+
+  const { nrows, ncols, pixels: pxPeak }  = gridPeak;
+  const { pixels: pxTrough }              = gridTrough;
   const centerRow = Math.floor(nrows / 2), centerCol = Math.floor(ncols / 2);
 
-  let bestContrast = -1, bestRow = centerRow, bestCol = centerCol;
-  for (let i = 0; i < pxA.length && i < pxB.length; i++) {
-    const a = pxA[i], b = pxB[i];
+  // Score = amplitude × mean NDVI
+  const MIN_MEAN_NDVI = 0.15;
+  let bestScore = -1, bestRow = centerRow, bestCol = centerCol;
+  for (let i = 0; i < pxPeak.length && i < pxTrough.length; i++) {
+    const a = pxPeak[i], b = pxTrough[i];
     if (a === null || b === null) continue;
-    const contrast = Math.abs(a - b);
-    if (contrast > bestContrast) {
-      bestContrast = contrast;
+    const mean = (a + b) / 2;
+    if (mean < MIN_MEAN_NDVI) continue;
+    const score = Math.abs(a - b) * mean;
+    if (score > bestScore) {
+      bestScore = score;
       bestRow = Math.floor(i / ncols);
       bestCol = i % ncols;
     }
@@ -79,12 +140,12 @@ async function findSeasonalPixel(lat, lon) {
 
   const latAdj = lat + (bestRow - centerRow) * PIXEL_KM / KM_PER_DEG;
   const lonAdj = lon + (bestCol - centerCol) * PIXEL_KM / (KM_PER_DEG * Math.cos(lat * Math.PI / 180));
-  return { lat: latAdj, lon: lonAdj };
+  return { lat: latAdj, lon: lonAdj, peakKey, troughKey };
 }
 
 export async function fetchModisNDVI(lat, lon, onProgress) {
   onProgress(0);
-  const { lat: sampLat, lon: sampLon } = await findSeasonalPixel(lat, lon);
+  const { lat: sampLat, lon: sampLon, peakKey, troughKey } = await findSeasonalPixel(lat, lon);
 
   // 10-year baseline (2013–2022) at full 16-day composite cadence.
   // Each year produces 3 API calls (batches of 10 DOYs); 10 years = 30 calls total.
@@ -170,7 +231,7 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
   });
 
   const sampMapUrl = `https://www.google.com/maps?q=${sampLat.toFixed(5)},${sampLon.toFixed(5)}`;
-  return { ndvi, sampLat, sampLon, sampMapUrl };
+  return { ndvi, sampLat, sampLon, sampMapUrl, peakKey, troughKey };
 }
 
 export function ndviProxyFallback(tempArr, rainArr) {

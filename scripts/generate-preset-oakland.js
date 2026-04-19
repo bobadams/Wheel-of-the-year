@@ -76,7 +76,7 @@ async function fetchERA5() {
   const url = 'https://archive-api.open-meteo.com/v1/archive'
     + `?latitude=${LAT}&longitude=${LON}`
     + '&start_date=1991-01-01&end_date=2020-12-31'
-    + '&daily=temperature_2m_mean,precipitation_sum,windspeed_10m_mean,winddirection_10m_dominant'
+    + '&daily=temperature_2m_max,precipitation_sum,windspeed_10m_mean,winddirection_10m_dominant'
     + '&timezone=America%2FLos_Angeles'
     + '&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch';
 
@@ -141,8 +141,8 @@ async function main() {
 
   // ERA5
   const era5 = await fetchERA5();
-  const { time, temperature_2m_mean, precipitation_sum, windspeed_10m_mean, winddirection_10m_dominant } = era5.daily;
-  const temp    = computeDOYNormals(time, temperature_2m_mean);
+  const { time, temperature_2m_max, precipitation_sum, windspeed_10m_mean, winddirection_10m_dominant } = era5.daily;
+  const temp    = computeDOYNormals(time, temperature_2m_max);
   const rain    = computeDOYNormals(time, precipitation_sum);
   const wind    = computeDOYNormals(time, windspeed_10m_mean);
   const windDir = computeWindDirNormals(time, winddirection_10m_dominant);

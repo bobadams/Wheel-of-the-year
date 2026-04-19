@@ -1,4 +1,5 @@
 import { RING_DEFS } from '../data/ringDefs.js';
+import { ringState } from '../state.js';
 
 function percentile(sorted, p) {
   const idx = (p / 100) * (sorted.length - 1);
@@ -6,10 +7,11 @@ function percentile(sorted, p) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
-export function computeNormBounds(data, mode) {
+export function computeNormBounds(data) {
   const bounds = {};
   RING_DEFS.forEach(r => {
     const arr = data[r.id];
+    const mode = ringState[r.id]?.normMode ?? r.defaultNormMode;
     if (!Array.isArray(arr)) {
       bounds[r.id] = { lo: r.normLo, hi: r.normHi };
       return;
@@ -25,11 +27,6 @@ export function computeNormBounds(data, mode) {
       const sorted = [...arr].sort((a, b) => a - b);
       const lo = percentile(sorted, 5), hi = percentile(sorted, 95);
       bounds[r.id] = { lo, hi: hi === lo ? lo + 1 : hi };
-    } else if (mode === 'zscore') {
-      const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
-      const std = Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / arr.length);
-      const spread = std === 0 ? 1 : 2 * std;
-      bounds[r.id] = { lo: 0, hi: spread };
     }
   });
   return bounds;
