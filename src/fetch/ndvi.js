@@ -6,18 +6,22 @@ export async function fetchModisBatch(lat, lon, startKey, endKey) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${lat}&longitude=${lon}&startDate=${startKey}&endDate=${endKey}`
     + `&kmAboveBelow=0&kmLeftRight=0`;
-  const r = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
-  const d = await r.json();
-  return (d.subset || [])
-    .filter(s => s.band === '250m_16_days_NDVI')
-    .map(row => {
-      const scale = row.scale ?? 0.0001;
-      const vals = row.data.map(v => v * scale).filter(v => v > -0.2 && v <= 1.0);
-      if (!vals.length) return null;
-      return { date: row.calendar_date, value: vals.reduce((a, b) => a + b, 0) / vals.length };
-    })
-    .filter(Boolean);
+  try {
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
+    const d = await r.json();
+    return (d.subset || [])
+      .filter(s => s.band === '250m_16_days_NDVI')
+      .map(row => {
+        const scale = row.scale ?? 0.0001;
+        const vals = row.data.map(v => v * scale).filter(v => v > -0.2 && v <= 1.0);
+        if (!vals.length) return null;
+        return { date: row.calendar_date, value: vals.reduce((a, b) => a + b, 0) / vals.length };
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 async function fetchPixelGrid(lat, lon, dateKey, km) {

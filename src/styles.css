@@ -63,6 +63,14 @@ input[type=color] { width: 26px; height: 18px; border: 1px solid var(--border); 
 .misc-label { font-size: .82rem; color: var(--ink-light); }
 .divider { border: none; border-top: 1px solid var(--border); margin: .1rem 0; }
 
+.norm-section { padding: 0 .1rem; }
+.norm-btn-group { display: flex; flex-wrap: wrap; gap: .25rem; }
+.norm-btn { font-family: 'Crimson Pro', serif; font-size: .76rem; background: transparent;
+  border: 1px solid var(--border); color: var(--ink-light); padding: .18rem .45rem;
+  border-radius: 10px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+.norm-btn:hover { border-color: var(--ink-light); color: var(--ink); }
+.norm-btn.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
 .status { font-size: .74rem; color: var(--ink-light); text-align: center; min-height: 1.2em; padding: .2rem 1rem; font-style: italic; }
 .status.loading { color: #2471a3; } .status.error { color: #c0392b; } .status.ok { color: #27ae60; }
 

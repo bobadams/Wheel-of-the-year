@@ -13,7 +13,7 @@ export function smoothEntries(entries, winDays = 7) {
   });
 }
 
-export function drawActualsLine(ringDef, entries, layout) {
+export function drawActualsLine(ringDef, entries, layout, normBounds) {
   if (!entries?.length || !layout) return;
   const s = ringState[ringDef.id];
   if (!s.visible) return;
@@ -21,18 +21,19 @@ export function drawActualsLine(ringDef, entries, layout) {
   const innerR = layout.innerFrac * W;
   const maxThick = layout.thickFrac * W;
   const smoothed = smoothEntries(entries, 5);
+  const { lo, hi } = normBounds?.[ringDef.id] ?? { lo: ringDef.normLo, hi: ringDef.normHi };
 
   ctx.save();
   ctx.strokeStyle = s.color; ctx.lineWidth = W * 0.007; ctx.globalAlpha = 1.0;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
   smoothed.forEach((e, i) => {
-    const r = innerR + norm(e.value, ringDef.normLo, ringDef.normHi) * maxThick;
+    const r = innerR + norm(e.value, lo, hi) * maxThick;
     const [x, y] = polar(CX, CY, doy2angle(e.doy + 0.5), r);
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
   ctx.stroke();
   [smoothed[0], smoothed[smoothed.length - 1]].forEach(e => {
-    const r = innerR + norm(e.value, ringDef.normLo, ringDef.normHi) * maxThick;
+    const r = innerR + norm(e.value, lo, hi) * maxThick;
     const [x, y] = polar(CX, CY, doy2angle(e.doy + 0.5), r);
     ctx.beginPath(); ctx.arc(x, y, W * 0.005, 0, Math.PI * 2);
     ctx.fillStyle = s.color; ctx.globalAlpha = 1; ctx.fill();
@@ -40,7 +41,7 @@ export function drawActualsLine(ringDef, entries, layout) {
   ctx.restore();
 }
 
-export function drawTodayDot(layouts) {
+export function drawTodayDot(layouts, normBounds) {
   if (todayDOY === null) return;
   const { ctx, W, CX, CY } = canvas;
   const angle = doy2angle(todayDOY + 0.5);
@@ -53,7 +54,8 @@ export function drawTodayDot(layouts) {
     if (!entries?.length) return;
     const entry = entries.reduce((best, e) =>
       Math.abs(e.doy - todayDOY) < Math.abs(best.doy - todayDOY) ? e : best, entries[0]);
-    const rr = layouts[id].innerFrac * W + norm(entry.value, r.normLo, r.normHi) * layouts[id].thickFrac * W;
+    const { lo, hi } = normBounds?.[id] ?? { lo: r.normLo, hi: r.normHi };
+    const rr = layouts[id].innerFrac * W + norm(entry.value, lo, hi) * layouts[id].thickFrac * W;
     if (rr > outerR) outerR = rr;
   });
   if (outerR === 0) return;

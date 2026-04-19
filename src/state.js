@@ -12,7 +12,7 @@ RING_DEFS.forEach(r => {
 });
 
 // Global display toggles
-export const displayState = { moon: true, axis: true, ticks: true, actuals: true };
+export const displayState = { moon: true, axis: true, ticks: true, actuals: true, windBarbs: false, normMode: 'fixed' };
 
 // Currently displayed climate data
 export let currentData = PRESETS[0].data;
