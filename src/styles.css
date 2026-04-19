@@ -74,11 +74,11 @@ input[type=color] { width: 26px; height: 18px; border: 1px solid var(--border); 
 .status { font-size: .74rem; color: var(--ink-light); text-align: center; min-height: 1.2em; padding: .2rem 1rem; font-style: italic; }
 .status.loading { color: #2471a3; } .status.error { color: #c0392b; } .status.ok { color: #27ae60; }
 
-.ndvi-progress { display: none; flex-direction: column; gap: .2rem; padding: .2rem 1rem; max-width: 680px; width: 100%; align-items: center; }
-.ndvi-progress.visible { display: flex; }
-.ndvi-bar-wrap { width: min(92vw,500px); height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
-.ndvi-bar { height: 100%; background: #27ae60; border-radius: 3px; transition: width .3s; width: 0%; }
-.ndvi-msg { font-size: .7rem; color: var(--ink-light); font-style: italic; }
+.evi-progress { display: none; flex-direction: column; gap: .2rem; padding: .2rem 1rem; max-width: 680px; width: 100%; align-items: center; }
+.evi-progress.visible { display: flex; }
+.evi-bar-wrap { width: min(92vw,500px); height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.evi-bar { height: 100%; background: #27ae60; border-radius: 3px; transition: width .3s; width: 0%; }
+.evi-msg { font-size: .7rem; color: var(--ink-light); font-style: italic; }
 
 .legend { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; justify-content: center; padding: .3rem 1rem .5rem; max-width: 680px; }
 .legend-item { display: flex; align-items: center; gap: .35rem; font-size: .8rem; color: var(--ink-light); }

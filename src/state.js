@@ -3,7 +3,7 @@ import { PRESETS } from './data/presets.js';
 import { gaussianSmooth } from './utils/smooth.js';
 
 // Ring display order (innermost → outermost)
-export const ringOrder = ['temp', 'rain', 'daylight', 'ndvi', 'wind'];
+export const ringOrder = ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25'];
 
 // Per-ring UI state
 export const ringState = {};
@@ -16,7 +16,7 @@ export const displayState = { moon: true, axis: true, ticks: true, actuals: true
 
 function precomputeSmoothed(data) {
   const out = {};
-  ['temp', 'rain', 'daylight', 'ndvi', 'wind'].forEach(id => {
+  ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25'].forEach(id => {
     if (Array.isArray(data[id])) out[id] = gaussianSmooth(data[id]);
   });
   return out;

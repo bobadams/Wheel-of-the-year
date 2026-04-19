@@ -47,7 +47,7 @@ export function drawTodayDot(layouts, normBounds) {
   const angle = doy2angle(todayDOY + 0.5);
 
   let outerR = 0;
-  ['temp', 'rain', 'ndvi'].forEach(id => {
+  ['temp', 'rain', 'evi'].forEach(id => {
     const r = RING_DEFS.find(r => r.id === id);
     if (!r || !ringState[id].visible || !layouts[id]) return;
     const entries = actuals?.[id];

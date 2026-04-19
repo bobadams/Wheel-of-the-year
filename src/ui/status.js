@@ -9,8 +9,8 @@ export function setLoading(on) {
   document.getElementById('fetchBtn').disabled = on;
 }
 
-export function setNdviProgress(visible, pct = 0, msg = '') {
-  document.getElementById('ndviProgress').className = 'ndvi-progress' + (visible ? ' visible' : '');
-  document.getElementById('ndviBar').style.width = pct + '%';
-  document.getElementById('ndviMsg').textContent = msg;
+export function setEviProgress(visible, pct = 0, msg = '') {
+  document.getElementById('eviProgress').className = 'evi-progress' + (visible ? ' visible' : '');
+  document.getElementById('eviBar').style.width = pct + '%';
+  document.getElementById('eviMsg').textContent = msg;
 }

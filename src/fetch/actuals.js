@@ -1,4 +1,4 @@
-import { fetchModisBatch } from './ndvi.js';
+import { fetchModisBatch } from './evi.js';
 
 export function calendarDOY(dateStr) {
   const [, mo, dy] = dateStr.split('-').map(Number);
@@ -36,7 +36,7 @@ export async function fetchActuals(lat, lon) {
   return { temp: tempEntries, rain: rainEntries, todayDOY: calendarDOY(todayStr) };
 }
 
-export async function fetchRecentNDVI(lat, lon) {
+export async function fetchRecentEVI(lat, lon) {
   const now = new Date();
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
@@ -53,7 +53,7 @@ export async function fetchRecentNDVI(lat, lon) {
   const results = [];
   for (let i = 0; i < allDates.length; i += 10) {
     try { const b = allDates.slice(i, i + 10); results.push(...await fetchModisBatch(lat, lon, b[0], b[b.length - 1])); }
-    catch (e) { console.warn('Recent NDVI batch failed', e); }
+    catch (e) { console.warn('Recent EVI batch failed', e); }
     if (i + 10 < allDates.length) await new Promise(res => setTimeout(res, 120));
   }
   if (!results.length) return null;

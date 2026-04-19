@@ -36,7 +36,7 @@ export async function fetchModisBatch(lat, lon, startKey, endKey, km = 0) {
     if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
     const d = await r.json();
     return (d.subset || [])
-      .filter(s => s.band === '250m_16_days_NDVI')
+      .filter(s => s.band === '250m_16_days_EVI')
       .map(row => {
         const scale = row.scale ?? 0.0001;
         const vals = row.data.map(v => v * scale).filter(v => v > -0.2 && v <= 1.0);
@@ -58,7 +58,7 @@ export async function fetchPixelGrid(lat, lon, dateKey, km) {
     const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
     if (!r.ok) return null;
     const d = await r.json();
-    const row = (d.subset || []).find(s => s.band === '250m_16_days_NDVI');
+    const row = (d.subset || []).find(s => s.band === '250m_16_days_EVI');
     if (!row?.data?.length) return null;
     const scale = row.scale ?? 0.0001;
     const side = Math.round(Math.sqrt(row.data.length));
@@ -122,14 +122,14 @@ async function findSeasonalPixel(lat, lon) {
   const { pixels: pxTrough }              = gridTrough;
   const centerRow = Math.floor(nrows / 2), centerCol = Math.floor(ncols / 2);
 
-  // Score = amplitude × mean NDVI
-  const MIN_MEAN_NDVI = 0.15;
+  // Score = amplitude × mean EVI
+  const MIN_MEAN_EVI = 0.10;
   let bestScore = -1, bestRow = centerRow, bestCol = centerCol;
   for (let i = 0; i < pxPeak.length && i < pxTrough.length; i++) {
     const a = pxPeak[i], b = pxTrough[i];
     if (a === null || b === null) continue;
     const mean = (a + b) / 2;
-    if (mean < MIN_MEAN_NDVI) continue;
+    if (mean < MIN_MEAN_EVI) continue;
     const score = Math.abs(a - b) * mean;
     if (score > bestScore) {
       bestScore = score;
@@ -143,7 +143,7 @@ async function findSeasonalPixel(lat, lon) {
   return { lat: latAdj, lon: lonAdj, peakKey, troughKey };
 }
 
-export async function fetchModisNDVI(lat, lon, onProgress) {
+export async function fetchModisEVI(lat, lon, onProgress) {
   onProgress(0);
   const { lat: sampLat, lon: sampLon, peakKey, troughKey } = await findSeasonalPixel(lat, lon);
 
@@ -221,7 +221,7 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
   // Gaussian smoothing to remove inter-composite staircase artifacts.
   const sigma = 5, kernelR = 12;
   const gauss = x => Math.exp(-0.5 * (x / sigma) ** 2);
-  const ndvi = raw.map((_, i) => {
+  const evi = raw.map((_, i) => {
     let sum = 0, wt = 0;
     for (let k = -kernelR; k <= kernelR; k++) {
       const j = (i + k + 365) % 365;
@@ -231,16 +231,16 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
   });
 
   const sampMapUrl = `https://www.google.com/maps?q=${sampLat.toFixed(5)},${sampLon.toFixed(5)}`;
-  return { ndvi, sampLat, sampLon, sampMapUrl, peakKey, troughKey };
+  return { evi, sampLat, sampLon, sampMapUrl, peakKey, troughKey };
 }
 
-export function ndviProxyFallback(tempArr, rainArr) {
+export function eviProxyFallback(tempArr, rainArr) {
   return tempArr.map((t, i) => {
-    const r = rainArr[i]; let v = .08;
-    if (r > .05)        v += .32 * (Math.min(r * 30, 5) / 5);
-    if (t > 40 && t < 90) v += .28 * ((t - 40) / 50);
+    const r = rainArr[i]; let v = .06;
+    if (r > .05)        v += .24 * (Math.min(r * 30, 5) / 5);
+    if (t > 40 && t < 90) v += .22 * ((t - 40) / 50);
     if (t > 80)         v *= .78;
     if (r < .003 && t > 65) v *= .55;
-    return Math.round(Math.max(.05, Math.min(.80, v)) * 1000) / 1000;
+    return Math.round(Math.max(.03, Math.min(.65, v)) * 1000) / 1000;
   });
 }

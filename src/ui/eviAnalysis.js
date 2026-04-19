@@ -1,16 +1,16 @@
-import { fetchPixelGrid, fetchModisBatch, fetchAnnualSeries } from '../fetch/ndvi.js';
+import { fetchPixelGrid, fetchModisBatch, fetchAnnualSeries } from '../fetch/evi.js';
 import { currentData } from '../state.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const SCREEN_KM     = 10;
-const PIXEL_KM      = 0.25;
-const KM_PER_DEG    = 111.0;
-const MIN_MEAN_NDVI = 0.15;
-const TILE_SIZE     = 256;
-const ZOOM          = 13;
-const PANEL_PX      = 280;   // display canvas size (square)
-const TS_W          = 700;
-const TS_H          = 200;
+const SCREEN_KM    = 10;
+const PIXEL_KM     = 0.25;
+const KM_PER_DEG   = 111.0;
+const MIN_MEAN_EVI = 0.10;
+const TILE_SIZE    = 256;
+const ZOOM         = 13;
+const PANEL_PX     = 280;   // display canvas size (square)
+const TS_W         = 700;
+const TS_H         = 200;
 
 const tileUrl = (z, ty, tx) =>
   `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`;
@@ -89,13 +89,14 @@ async function drawSatelliteBg(ctx, canvasPx, lat, lon, nrows, ncols) {
 }
 
 // ── Color maps ─────────────────────────────────────────────────────────────────
-function ndviRgb(v) {
+// EVI thresholds are lower than NDVI — dense canopy tops out around 0.65
+function eviRgb(v) {
   if (v === null) return null;
-  if (v < 0.05) return [80,  60,  30];   // very dry / bare
-  if (v < 0.15) return [170, 130, 50];   // sparse/dry
-  if (v < 0.30) return [210, 200, 60];   // low vegetation
-  if (v < 0.45) return [120, 190, 55];   // moderate
-  if (v < 0.60) return [40,  160, 40];   // healthy
+  if (v < 0.03) return [80,  60,  30];   // very dry / bare
+  if (v < 0.10) return [170, 130, 50];   // sparse/dry
+  if (v < 0.20) return [210, 200, 60];   // low vegetation
+  if (v < 0.30) return [120, 190, 55];   // moderate
+  if (v < 0.45) return [40,  160, 40];   // healthy
   return              [10,  100, 20];    // dense / vigorous
 }
 
@@ -111,9 +112,9 @@ function diffRgb(v, maxAbs) {
   }
 }
 
-// ── NDVI overlay ───────────────────────────────────────────────────────────────
+// ── EVI overlay ────────────────────────────────────────────────────────────────
 // MODIS row 0 = south; for map display (north up) we flip vertically
-function drawNdviOverlay(ctx, canvasPx, pixels, nrows, ncols, colorFn, opacity, bestIdx) {
+function drawEviOverlay(ctx, canvasPx, pixels, nrows, ncols, colorFn, opacity, bestIdx) {
   const cellW = canvasPx / ncols;
   const cellH = canvasPx / nrows;
 
@@ -145,7 +146,7 @@ function drawNdviOverlay(ctx, canvasPx, pixels, nrows, ncols, colorFn, opacity, 
   }
 }
 
-// ── Best-pixel algorithm (mirrors ndvi.js findSeasonalPixel) ──────────────────
+// ── Best-pixel algorithm (mirrors evi.js findSeasonalPixel) ───────────────────
 function findBestIdx(pxA, pxB, nrows, ncols) {
   const centerRow = Math.floor(nrows / 2);
   const centerCol = Math.floor(ncols / 2);
@@ -156,7 +157,7 @@ function findBestIdx(pxA, pxB, nrows, ncols) {
     const a = pxA[i], b = pxB[i];
     if (a === null || b === null) continue;
     const mean = (a + b) / 2;
-    if (mean < MIN_MEAN_NDVI) continue;
+    if (mean < MIN_MEAN_EVI) continue;
     const score = Math.abs(a - b) * mean;
     if (score > bestScore) { bestScore = score; bestIdx = i; }
   }
@@ -245,7 +246,7 @@ function drawTimeSeries(canvas, avgPoints) {
     return;
   }
 
-  // x: DOY 1–365, y: NDVI 0–1
+  // x: DOY 1–365, y: EVI 0–1
   const toX = doy => PAD.l + (doy - 1) / 364 * pw;
   const toY = v   => PAD.t + (1 - Math.max(0, Math.min(1, v))) * ph;
 
@@ -322,7 +323,7 @@ function drawTimeSeries(canvas, avgPoints) {
   ctx.translate(12, PAD.t + ph / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = 'center'; ctx.font = '11px Crimson Pro, serif'; ctx.fillStyle = '#555';
-  ctx.fillText('NDVI', 0, 0);
+  ctx.fillText('EVI', 0, 0);
   ctx.restore();
 
   // ── Axes ──
@@ -335,11 +336,11 @@ function drawTimeSeries(canvas, avgPoints) {
 
 // ── Modal styles ───────────────────────────────────────────────────────────────
 function injectStyles() {
-  if (document.getElementById('ndvi-modal-css')) return;
+  if (document.getElementById('evi-modal-css')) return;
   const s = document.createElement('style');
-  s.id = 'ndvi-modal-css';
+  s.id = 'evi-modal-css';
   s.textContent = `
-    .ndvi-overlay {
+    .evi-overlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,.55);
       display: flex; align-items: center; justify-content: center;
@@ -347,7 +348,7 @@ function injectStyles() {
       padding: 1rem;
       overflow-y: auto;
     }
-    .ndvi-modal {
+    .evi-modal {
       background: #faf7f2;
       border-radius: 10px;
       padding: 1.4rem 1.6rem 1.6rem;
@@ -356,79 +357,79 @@ function injectStyles() {
       position: relative;
       box-shadow: 0 8px 40px rgba(0,0,0,.4);
     }
-    .ndvi-modal h2 {
+    .evi-modal h2 {
       font-family: 'Cinzel', serif;
       font-size: 1.1rem;
       color: #3a3028;
       margin: 0 2rem .2rem 0;
     }
-    .ndvi-modal-subtitle {
+    .evi-modal-subtitle {
       font-family: 'Crimson Pro', serif;
       font-size: .9rem;
       color: #888;
       margin: 0 0 1rem;
     }
-    .ndvi-modal-close {
+    .evi-modal-close {
       position: absolute; top: .8rem; right: .9rem;
       background: none; border: none;
       font-size: 1.5rem; cursor: pointer; color: #999;
       line-height: 1; padding: 0 .2rem;
     }
-    .ndvi-modal-close:hover { color: #333; }
-    .ndvi-panels {
+    .evi-modal-close:hover { color: #333; }
+    .evi-panels {
       display: flex; gap: .9rem; margin-bottom: 1rem;
     }
-    .ndvi-panel {
+    .evi-panel {
       flex: 1; display: flex; flex-direction: column; align-items: center;
     }
-    .ndvi-panel-title {
+    .evi-panel-title {
       font-family: 'Crimson Pro', serif;
       font-size: .82rem; color: #666;
       margin-bottom: .3rem; text-align: center;
     }
-    .ndvi-panel canvas {
+    .evi-panel canvas {
       width: 100%; aspect-ratio: 1;
       border-radius: 4px;
       border: 1px solid #ddd;
       image-rendering: pixelated;
     }
-    .ndvi-opacity-row {
+    .evi-opacity-row {
       display: flex; align-items: center; gap: .7rem;
       margin-bottom: 1rem;
       font-family: 'Crimson Pro', serif;
       font-size: .85rem; color: #555;
     }
-    .ndvi-opacity-row input[type=range] {
+    .evi-opacity-row input[type=range] {
       flex: 1; max-width: 200px;
     }
-    .ndvi-ts-title {
+    .evi-ts-title {
       font-family: 'Crimson Pro', serif;
       font-size: .82rem; color: #666; margin-bottom: .3rem;
     }
-    .ndvi-ts-panel canvas {
+    .evi-ts-panel canvas {
       width: 100%; height: auto;
       border-radius: 4px; border: 1px solid #e8e2d8;
     }
-    .ndvi-loading {
+    .evi-loading {
       font-family: 'Crimson Pro', serif;
       font-size: .9rem; color: #888;
       text-align: center; padding: .5rem 0;
     }
-    .ndvi-legend {
+    .evi-legend {
       display: flex; gap: .5rem; flex-wrap: wrap;
       margin: .4rem 0 .7rem;
       font-family: 'Crimson Pro', serif;
       font-size: .78rem; color: #666;
     }
-    .ndvi-legend-item {
+    .evi-legend-item {
       display: flex; align-items: center; gap: .25rem;
     }
-    .ndvi-legend-swatch {
+    .evi-legend-swatch {
       width: 14px; height: 14px; border-radius: 2px; flex-shrink: 0;
     }
     @media (max-width: 640px) {
-      .ndvi-panels { flex-direction: column; }
-      .ndvi-panel canvas { max-width: 100%; }
+      .evi-panels { flex-direction: column; }
+      .evi-panel canvas { max-width: 100%; }
     }
   `;
   document.head.appendChild(s);
@@ -442,77 +443,77 @@ function renderPanel(canvasEl, bgCanvas, pixels, nrows, ncols, colorFn, bestIdx,
   const px  = canvasEl.width;
   ctx.clearRect(0, 0, px, px);
   ctx.drawImage(bgCanvas, 0, 0, px, px);
-  drawNdviOverlay(ctx, px, pixels, nrows, ncols, colorFn, overlayOpacity, bestIdx);
+  drawEviOverlay(ctx, px, pixels, nrows, ncols, colorFn, overlayOpacity, bestIdx);
 }
 
 // ── Public entry point ─────────────────────────────────────────────────────────
-export async function showNdviAnalysis() {
-  const lat  = currentData.ndviSampLat  ?? currentData.meta?.ndvi?.sampLat  ?? currentData.lat;
-  const lon  = currentData.ndviSampLon  ?? currentData.meta?.ndvi?.sampLon  ?? currentData.lon;
+export async function showEviAnalysis() {
+  const lat  = currentData.eviSampLat  ?? currentData.lat;
+  const lon  = currentData.eviSampLon  ?? currentData.lon;
   const name = currentData.name ?? '';
 
   injectStyles();
 
   // Remove any existing modal
-  document.getElementById('ndvi-modal-overlay')?.remove();
+  document.getElementById('evi-modal-overlay')?.remove();
 
   const overlay = document.createElement('div');
-  overlay.id        = 'ndvi-modal-overlay';
-  overlay.className = 'ndvi-overlay';
+  overlay.id        = 'evi-modal-overlay';
+  overlay.className = 'evi-overlay';
   overlay.innerHTML = `
-    <div class="ndvi-modal">
-      <button class="ndvi-modal-close" title="Close">×</button>
+    <div class="evi-modal">
+      <button class="evi-modal-close" title="Close">×</button>
       <h2>Vegetation Analysis</h2>
-      <p class="ndvi-modal-subtitle">${name} · ${lat.toFixed(4)}°, ${lon.toFixed(4)}°</p>
+      <p class="evi-modal-subtitle">${name} · ${lat.toFixed(4)}°, ${lon.toFixed(4)}°</p>
 
-      <div class="ndvi-panels">
-        <div class="ndvi-panel">
-          <div class="ndvi-panel-title" id="ndvi-title-peak">Peak NDVI · loading…</div>
-          <canvas id="ndvi-panel-jan" width="${PANEL_PX}" height="${PANEL_PX}"></canvas>
+      <div class="evi-panels">
+        <div class="evi-panel">
+          <div class="evi-panel-title" id="evi-title-peak">Peak EVI · loading…</div>
+          <canvas id="evi-panel-jan" width="${PANEL_PX}" height="${PANEL_PX}"></canvas>
         </div>
-        <div class="ndvi-panel">
-          <div class="ndvi-panel-title" id="ndvi-title-trough">Trough NDVI · loading…</div>
-          <canvas id="ndvi-panel-jul" width="${PANEL_PX}" height="${PANEL_PX}"></canvas>
+        <div class="evi-panel">
+          <div class="evi-panel-title" id="evi-title-trough">Trough EVI · loading…</div>
+          <canvas id="evi-panel-jul" width="${PANEL_PX}" height="${PANEL_PX}"></canvas>
         </div>
-        <div class="ndvi-panel">
-          <div class="ndvi-panel-title" id="ndvi-title-diff">Peak − Trough · Seasonal change</div>
-          <canvas id="ndvi-panel-diff" width="${PANEL_PX}" height="${PANEL_PX}"></canvas>
+        <div class="evi-panel">
+          <div class="evi-panel-title" id="evi-title-diff">Peak − Trough · Seasonal change</div>
+          <canvas id="evi-panel-diff" width="${PANEL_PX}" height="${PANEL_PX}"></canvas>
         </div>
       </div>
 
-      <div class="ndvi-opacity-row">
-        <label for="ndvi-overlay-opacity">Overlay opacity</label>
-        <input type="range" id="ndvi-overlay-opacity" min="0" max="1" step="0.05" value="0.65">
-        <span id="ndvi-opacity-val">65%</span>
+      <div class="evi-opacity-row">
+        <label for="evi-overlay-opacity">Overlay opacity</label>
+        <input type="range" id="evi-overlay-opacity" min="0" max="1" step="0.05" value="0.65">
+        <span id="evi-opacity-val">65%</span>
       </div>
 
-      <div class="ndvi-legend" id="ndvi-legend-area"></div>
+      <div class="evi-legend" id="evi-legend-area"></div>
 
-      <div id="ndvi-map-status" class="ndvi-loading">Loading satellite imagery and NDVI grids…</div>
+      <div id="evi-map-status" class="evi-loading">Loading satellite imagery and EVI grids…</div>
 
-      <div class="ndvi-ts-panel" style="display:none" id="ndvi-ts-wrap">
-        <div class="ndvi-ts-title">NDVI seasonal profile · selected pixel · 5-year average (2019–2023) with year-to-year range</div>
-        <canvas id="ndvi-timeseries" width="${TS_W}" height="${TS_H}"></canvas>
+      <div class="evi-ts-panel" style="display:none" id="evi-ts-wrap">
+        <div class="evi-ts-title">EVI seasonal profile · selected pixel · 5-year average (2019–2023) with year-to-year range</div>
+        <canvas id="evi-timeseries" width="${TS_W}" height="${TS_H}"></canvas>
       </div>
-      <div id="ndvi-ts-status" class="ndvi-loading" style="display:none"></div>
+      <div id="evi-ts-status" class="evi-loading" style="display:none"></div>
     </div>`;
   document.body.appendChild(overlay);
 
   // Close handlers
-  overlay.querySelector('.ndvi-modal-close').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.evi-modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 
-  const opacityInput = overlay.querySelector('#ndvi-overlay-opacity');
-  const opacityVal   = overlay.querySelector('#ndvi-opacity-val');
-  const statusEl     = overlay.querySelector('#ndvi-map-status');
+  const opacityInput = overlay.querySelector('#evi-overlay-opacity');
+  const opacityVal   = overlay.querySelector('#evi-opacity-val');
+  const statusEl     = overlay.querySelector('#evi-map-status');
 
   // ── Step 1: derive data-driven peak/trough dates for this location ──────────
   // Use stored keys from the main fetch if available; otherwise fetch the
   // annual series ourselves so the modal works correctly for preset data too.
   statusEl.textContent = 'Finding peak & trough composite dates for this location…';
 
-  let peakKey   = currentData.ndviPeakKey   ?? null;
-  let troughKey = currentData.ndviTroughKey ?? null;
+  let peakKey   = currentData.eviPeakKey   ?? null;
+  let troughKey = currentData.eviTroughKey ?? null;
 
   if (!peakKey || !troughKey) {
     // Use city-centre coords with a 3 km spatial average so the API returns
@@ -543,12 +544,12 @@ export async function showNdviAnalysis() {
   }
 
   // Update panel titles with real dates
-  overlay.querySelector('#ndvi-title-peak'  ).textContent = `Peak NDVI · ${modisKeyToLabel(peakKey)}`;
-  overlay.querySelector('#ndvi-title-trough').textContent = `Trough NDVI · ${modisKeyToLabel(troughKey)}`;
-  overlay.querySelector('#ndvi-title-diff'  ).textContent = `Peak − Trough · seasonal change`;
+  overlay.querySelector('#evi-title-peak'  ).textContent = `Peak EVI · ${modisKeyToLabel(peakKey)}`;
+  overlay.querySelector('#evi-title-trough').textContent = `Trough EVI · ${modisKeyToLabel(troughKey)}`;
+  overlay.querySelector('#evi-title-diff'  ).textContent = `Peak − Trough · seasonal change`;
 
   // ── Step 2: fetch 250m grids at peak and trough dates ────────────────────
-  statusEl.textContent = 'Fetching 250m NDVI grids…';
+  statusEl.textContent = 'Fetching 250m EVI grids…';
   let gridA, gridB;
   try {
     [gridA, gridB] = await Promise.all([
@@ -576,7 +577,7 @@ export async function showNdviAnalysis() {
   const validDiffs = diffPixels.filter(v => v !== null);
   const maxAbs = Math.max(0.01, ...validDiffs.map(Math.abs));
 
-  // Find best pixel (max amplitude × mean, same algorithm as ndvi.js)
+  // Find best pixel (max amplitude × mean, same algorithm as evi.js)
   const bestIdx = findBestIdx(pxPeak, pxTrough, nrows, ncols);
   const bestRow = Math.floor(bestIdx / ncols);
   const bestCol = bestIdx % ncols;
@@ -589,9 +590,9 @@ export async function showNdviAnalysis() {
 
   statusEl.textContent = 'Rendering satellite tiles…';
 
-  const janCanvas  = overlay.querySelector('#ndvi-panel-jan');
-  const julCanvas  = overlay.querySelector('#ndvi-panel-jul');
-  const diffCanvas = overlay.querySelector('#ndvi-panel-diff');
+  const janCanvas  = overlay.querySelector('#evi-panel-jan');
+  const julCanvas  = overlay.querySelector('#evi-panel-jul');
+  const diffCanvas = overlay.querySelector('#evi-panel-diff');
 
   // Fetch satellite tiles once into an offscreen canvas, reuse for all panels
   const bgCanvas = document.createElement('canvas');
@@ -602,31 +603,31 @@ export async function showNdviAnalysis() {
 
   // ── Redraw all three panels (synchronous after bg is ready) ──
   function renderAllPanels(opacity) {
-    renderPanel(janCanvas,  bgCanvas, pxPeak,     nrows, ncols, ndviRgb,                  bestIdx, opacity);
-    renderPanel(julCanvas,  bgCanvas, pxTrough,   nrows, ncols, ndviRgb,                  bestIdx, opacity);
+    renderPanel(janCanvas,  bgCanvas, pxPeak,     nrows, ncols, eviRgb,                   bestIdx, opacity);
+    renderPanel(julCanvas,  bgCanvas, pxTrough,   nrows, ncols, eviRgb,                   bestIdx, opacity);
     renderPanel(diffCanvas, bgCanvas, diffPixels, nrows, ncols, v => diffRgb(v, maxAbs),  bestIdx, opacity);
   }
 
   renderAllPanels(currentOpacity);
   statusEl.style.display = 'none';
 
-  // Build NDVI color legend
-  const legendEl = overlay.querySelector('#ndvi-legend-area');
+  // Build EVI color legend
+  const legendEl = overlay.querySelector('#evi-legend-area');
   [
-    { color: [80, 60, 30],   label: 'Bare/very dry (< 0.05)' },
-    { color: [170, 130, 50], label: 'Sparse (0.05–0.15)' },
-    { color: [210, 200, 60], label: 'Low (0.15–0.30)' },
-    { color: [120, 190, 55], label: 'Moderate (0.30–0.45)' },
-    { color: [40, 160, 40],  label: 'Healthy (0.45–0.60)' },
-    { color: [10, 100, 20],  label: 'Dense (> 0.60)' },
+    { color: [80, 60, 30],   label: 'Bare/very dry (< 0.03)' },
+    { color: [170, 130, 50], label: 'Sparse (0.03–0.10)' },
+    { color: [210, 200, 60], label: 'Low (0.10–0.20)' },
+    { color: [120, 190, 55], label: 'Moderate (0.20–0.30)' },
+    { color: [40, 160, 40],  label: 'Healthy (0.30–0.45)' },
+    { color: [10, 100, 20],  label: 'Dense (> 0.45)' },
     { color: [255, 255, 255], label: 'No change (diff panel)' },
     { color: [10, 100, 20],  label: 'High contrast (diff panel)' },
     { color: [255, 255, 0],  label: '★ Selected pixel', border: true },
   ].forEach(({ color, label, border }) => {
     const item = document.createElement('div');
-    item.className = 'ndvi-legend-item';
+    item.className = 'evi-legend-item';
     item.innerHTML = `
-      <div class="ndvi-legend-swatch" style="background:rgb(${color[0]},${color[1]},${color[2]});${border ? 'border:2px solid #ffff00;' : ''}"></div>
+      <div class="evi-legend-swatch" style="background:rgb(${color[0]},${color[1]},${color[2]});${border ? 'border:2px solid #ffff00;' : ''}"></div>
       <span>${label}</span>`;
     legendEl.appendChild(item);
   });
@@ -638,9 +639,9 @@ export async function showNdviAnalysis() {
     renderAllPanels(currentOpacity);
   });
 
-  // ── Step 2: fetch + draw time series ──
-  const tsStatusEl = overlay.querySelector('#ndvi-ts-status');
-  const tsWrapEl   = overlay.querySelector('#ndvi-ts-wrap');
+  // ── Step 3: fetch + draw time series ──
+  const tsStatusEl = overlay.querySelector('#evi-ts-status');
+  const tsWrapEl   = overlay.querySelector('#evi-ts-wrap');
   tsStatusEl.textContent = 'Fetching time series for selected pixel…';
   tsStatusEl.style.display = '';
 
@@ -649,7 +650,7 @@ export async function showNdviAnalysis() {
     const avgPoints = smoothAvgPoints(averageByDOY(rawPoints));
     tsStatusEl.style.display = 'none';
     tsWrapEl.style.display   = '';
-    const tsCanvas = overlay.querySelector('#ndvi-timeseries');
+    const tsCanvas = overlay.querySelector('#evi-timeseries');
     drawTimeSeries(tsCanvas, avgPoints);
   } catch (e) {
     tsStatusEl.textContent = `Time series unavailable: ${e.message}`;

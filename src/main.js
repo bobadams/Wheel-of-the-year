@@ -15,9 +15,10 @@ import { drawMinMaxMarkers } from './draw/labels.js';
 import { drawWindBarbs } from './draw/windBarbs.js';
 import { drawActualsLine, drawTodayDot } from './draw/actuals.js';
 import { geocode, fetchClimateAPI, aggregateClimate } from './fetch/climate.js';
-import { fetchModisNDVI, ndviProxyFallback } from './fetch/ndvi.js';
-import { fetchActuals, fetchRecentNDVI } from './fetch/actuals.js';
-import { setStatus, setLoading, setNdviProgress } from './ui/status.js';
+import { fetchModisEVI, eviProxyFallback } from './fetch/evi.js';
+import { fetchPm25 } from './fetch/pm25.js';
+import { fetchActuals, fetchRecentEVI } from './fetch/actuals.js';
+import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
 import { setupTooltip } from './ui/tooltip.js';
@@ -49,7 +50,7 @@ function draw() {
   ctx.restore();
 
   if (actuals && displayState.actuals) {
-    ['temp', 'rain', 'ndvi'].forEach(id => {
+    ['temp', 'rain', 'evi'].forEach(id => {
       const r = RING_DEFS.find(r => r.id === id);
       if (r && actuals[id] && layouts[id]) drawActualsLine(r, actuals[id], layouts[id], normBounds);
     });
@@ -71,7 +72,7 @@ async function fetchCity() {
   setStatus('loading', 'Geocoding…');
   setLoading(true);
   setActuals(null); setTodayDOY(null);
-  setNdviProgress(false);
+  setEviProgress(false);
 
   try {
     const geo = await geocode(q);
@@ -80,33 +81,41 @@ async function fetchCity() {
     setStatus('loading', `Found ${shortName} — fetching climate normals…`);
     const climate = aggregateClimate(await fetchClimateAPI(geo.lat, geo.lon), geo.lat);
 
-    setStatus('loading', 'Normals loaded — fetching MODIS NDVI…');
-    setNdviProgress(true, 0, 'Fetching MODIS satellite data…');
-    let ndvi, ndviSampLat = geo.lat, ndviSampLon = geo.lon, ndviSampMapUrl = null;
-    let ndviPeakKey = null, ndviTroughKey = null;
+    setStatus('loading', 'Normals loaded — fetching MODIS EVI…');
+    setEviProgress(true, 0, 'Fetching MODIS satellite data…');
+    let evi, eviSampLat = geo.lat, eviSampLon = geo.lon, eviSampMapUrl = null;
+    let eviPeakKey = null, eviTroughKey = null;
     try {
-      ({ ndvi, sampLat: ndviSampLat, sampLon: ndviSampLon, sampMapUrl: ndviSampMapUrl,
-         peakKey: ndviPeakKey, troughKey: ndviTroughKey,
-       } = await fetchModisNDVI(geo.lat, geo.lon, pct => setNdviProgress(true, pct, `MODIS NDVI: ${pct}%…`)));
+      ({ evi, sampLat: eviSampLat, sampLon: eviSampLon, sampMapUrl: eviSampMapUrl,
+         peakKey: eviPeakKey, troughKey: eviTroughKey,
+       } = await fetchModisEVI(geo.lat, geo.lon, pct => setEviProgress(true, pct, `MODIS EVI: ${pct}%…`)));
     } catch {
-      ndvi = ndviProxyFallback(climate.tempF, climate.rainIn);
+      evi = eviProxyFallback(climate.tempF, climate.rainIn);
     }
-    setNdviProgress(false);
+    setEviProgress(false);
+
+    setStatus('loading', 'Fetching PM2.5 air quality normals…');
+    let pm25 = null;
+    try {
+      pm25 = await fetchPm25(geo.lat, geo.lon);
+    } catch { /* PM2.5 is optional; ring will be blank if unavailable */ }
 
     setCurrentData({
       name: shortName, lat: geo.lat, lon: geo.lon,
       temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
-      ndvi, wind: climate.windMph, windDir: climate.windDir,
-      ndviSampLat, ndviSampLon, ndviSampMapUrl,
-      ndviPeakKey, ndviTroughKey,
+      evi, wind: climate.windMph, windDir: climate.windDir,
+      pm25,
+      eviSampLat, eviSampLon, eviSampMapUrl,
+      eviPeakKey, eviTroughKey,
       resolution: climate.resolution,
-      ndviSource: ndvi ? 'MODIS 2019–2022' : 'proxy',
+      eviSource: evi ? 'MODIS EVI 2013–2022' : 'proxy',
       meta: {
         temp:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
         rain:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
         daylight: { sourceInterval: 'calculated',  source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
-        ndvi:     { sourceInterval: ndvi ? '16-day' : 'proxy', source: ndvi ? 'MODIS MOD13Q1 2019–2022' : 'ERA5-derived proxy' },
+        evi:      { sourceInterval: evi ? '16-day' : 'proxy', source: evi ? 'MODIS MOD13Q1 EVI 2013–2022' : 'ERA5-derived proxy' },
         wind:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
+        pm25:     { sourceInterval: 'hourly',      source: pm25 ? 'CAMS 2014–2023' : 'unavailable' },
       },
     });
     setActivePreset('');
@@ -119,20 +128,20 @@ async function fetchCity() {
     try {
       const w = await fetchActuals(geo.lat, geo.lon);
       setTodayDOY(w.todayDOY);
-      setActuals({ temp: w.temp, rain: w.rain, ndvi: null });
+      setActuals({ temp: w.temp, rain: w.rain, evi: null });
       draw();
       setStatus('ok', `${shortName} — normals + actuals loaded. Today = DOY ${w.todayDOY}.`);
 
       try {
-        const recentNdvi = await fetchRecentNDVI(geo.lat, geo.lon);
-        if (recentNdvi?.length) { actuals.ndvi = recentNdvi; draw(); }
-      } catch { /* NDVI actuals optional */ }
+        const recentEvi = await fetchRecentEVI(geo.lat, geo.lon);
+        if (recentEvi?.length) { actuals.evi = recentEvi; draw(); }
+      } catch { /* EVI actuals optional */ }
     } catch (e) {
       setStatus('error', `Normals loaded. Actuals failed: ${e.message}`);
     }
   } catch (e) {
     setStatus('error', e.message);
-    setNdviProgress(false);
+    setEviProgress(false);
   } finally {
     setLoading(false);
   }
