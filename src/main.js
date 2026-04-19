@@ -9,8 +9,10 @@ import {
 } from './state.js';
 import { computeRingLayouts } from './draw/layout.js';
 import { drawRing } from './draw/ring.js';
+import { computeNormBounds } from './draw/normalize.js';
 import { drawMoon, drawTicks, drawAxes, drawCenter } from './draw/decorations.js';
 import { drawMinMaxMarkers } from './draw/labels.js';
+import { drawWindBarbs } from './draw/windBarbs.js';
 import { drawActualsLine, drawTodayDot } from './draw/actuals.js';
 import { geocode, fetchClimateAPI, aggregateClimate } from './fetch/climate.js';
 import { fetchModisNDVI, ndviProxyFallback } from './fetch/ndvi.js';
@@ -24,16 +26,17 @@ import { setupTooltip } from './ui/tooltip.js';
 function draw() {
   const { ctx, W, H, CX, CY } = canvas;
   const layouts = computeRingLayouts();
+  const normBounds = computeNormBounds(currentData, displayState.normMode);
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#faf7f2'; ctx.fillRect(0, 0, W, H);
 
   ringOrder.forEach(id => {
-    const r = RING_DEFS.find(r => r.id === id);
     const s = ringState[id];
     if (!s.visible || !layouts[id]) return;
     const { innerFrac, thickFrac } = layouts[id];
     const ringData = s.smooth && smoothedData[id] ? smoothedData[id] : currentData[id];
-    drawRing(ringData, r.normLo, r.normHi, innerFrac * W, thickFrac * W, s.color, s.opacity);
+    const { lo, hi } = normBounds[id];
+    drawRing(ringData, lo, hi, innerFrac * W, thickFrac * W, s.color, s.opacity);
   });
 
   // Outer decorative circles
@@ -47,12 +50,13 @@ function draw() {
   if (actuals && displayState.actuals) {
     ['temp', 'rain', 'ndvi'].forEach(id => {
       const r = RING_DEFS.find(r => r.id === id);
-      if (r && actuals[id] && layouts[id]) drawActualsLine(r, actuals[id], layouts[id]);
+      if (r && actuals[id] && layouts[id]) drawActualsLine(r, actuals[id], layouts[id], normBounds);
     });
-    drawTodayDot(layouts);
+    drawTodayDot(layouts, normBounds);
   }
 
-  drawMinMaxMarkers(layouts);
+  drawMinMaxMarkers(layouts, normBounds);
+  if (displayState.windBarbs) drawWindBarbs(layouts);
   if (displayState.moon)  drawMoon();
   if (displayState.ticks) drawTicks();
   if (displayState.axis)  drawAxes();
@@ -88,7 +92,7 @@ async function fetchCity() {
     setCurrentData({
       name: shortName, lat: geo.lat, lon: geo.lon,
       temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
-      ndvi, wind: climate.windMph,
+      ndvi, wind: climate.windMph, windDir: climate.windDir,
       ndviSampLat, ndviSampLon, ndviSampMapUrl,
       resolution: climate.resolution,
       ndviSource: ndvi ? 'MODIS 2019–2022' : 'proxy',

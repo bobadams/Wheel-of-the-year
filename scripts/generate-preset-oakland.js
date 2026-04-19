@@ -76,7 +76,7 @@ async function fetchERA5() {
   const url = 'https://archive-api.open-meteo.com/v1/archive'
     + `?latitude=${LAT}&longitude=${LON}`
     + '&start_date=1991-01-01&end_date=2020-12-31'
-    + '&daily=temperature_2m_mean,precipitation_sum,windspeed_10m_mean'
+    + '&daily=temperature_2m_mean,precipitation_sum,windspeed_10m_mean,winddirection_10m_dominant'
     + '&timezone=America%2FLos_Angeles'
     + '&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch';
 
@@ -86,6 +86,39 @@ async function fetchERA5() {
   const d = await r.json();
   process.stdout.write('done.\n');
   return d;
+}
+
+function circMeanDir(sx, sy, n) {
+  if (n === 0) return null;
+  return ((Math.atan2(sy / n, sx / n) * 180 / Math.PI) + 360) % 360;
+}
+
+function computeWindDirNormals(dates, dirs) {
+  const sxs = new Array(365).fill(0), sys = new Array(365).fill(0);
+  const cnts = new Array(365).fill(0);
+  dates.forEach((d, i) => {
+    const v = dirs[i];
+    if (v == null || isNaN(v)) return;
+    const doy = dateToCalDOY(d);
+    if (doy < 0) return;
+    const r = v * Math.PI / 180;
+    sxs[doy] += Math.cos(r); sys[doy] += Math.sin(r); cnts[doy]++;
+  });
+  const result = sxs.map((sx, i) => circMeanDir(sx, sys[i], cnts[i]));
+  // Fill gaps by circular interpolation
+  for (let i = 0; i < 365; i++) {
+    if (result[i] !== null) continue;
+    let pi = i - 1, ni = i + 1;
+    while (pi >= 0  && result[pi] === null) pi--;
+    while (ni < 365 && result[ni] === null) ni++;
+    if (pi < 0)    { result[i] = result[ni]; continue; }
+    if (ni >= 365) { result[i] = result[pi]; continue; }
+    // Circular lerp
+    let diff = ((result[ni] - result[pi] + 540) % 360) - 180;
+    const t = (i - pi) / (ni - pi);
+    result[i] = ((result[pi] + diff * t) + 360) % 360;
+  }
+  return result.map(v => v === null ? null : Math.round(v * 10) / 10);
 }
 
 // ─── Daylight (astronomical) ─────────────────────────────────────────────────
@@ -108,10 +141,11 @@ async function main() {
 
   // ERA5
   const era5 = await fetchERA5();
-  const { time, temperature_2m_mean, precipitation_sum, windspeed_10m_mean } = era5.daily;
-  const temp = computeDOYNormals(time, temperature_2m_mean);
-  const rain = computeDOYNormals(time, precipitation_sum);
-  const wind = computeDOYNormals(time, windspeed_10m_mean);
+  const { time, temperature_2m_mean, precipitation_sum, windspeed_10m_mean, winddirection_10m_dominant } = era5.daily;
+  const temp    = computeDOYNormals(time, temperature_2m_mean);
+  const rain    = computeDOYNormals(time, precipitation_sum);
+  const wind    = computeDOYNormals(time, windspeed_10m_mean);
+  const windDir = computeWindDirNormals(time, winddirection_10m_dominant);
 
   // Daylight (pure math, no network)
   const daylight = computeDaylight();
@@ -149,6 +183,7 @@ async function main() {
       daylight,
       ndvi,
       wind,
+      windDir,
       resolution: 'daily (ERA5 archive 1991–2020 normals)',
       meta: {
         temp:     { sourceInterval: 'daily',      source: 'ERA5 archive 1991–2020', years: '1991–2020' },

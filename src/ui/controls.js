@@ -6,10 +6,39 @@ import { rebuildLegend } from './legend.js';
 let _draw = null;
 export function setDrawCallback(fn) { _draw = fn; }
 
+const NORM_MODES = [
+  { id: 'fixed',      label: 'Fixed',      title: 'Fixed global scale — compare across cities' },
+  { id: 'minmax',     label: 'Min/Max',    title: "Stretched to each ring's actual min and max" },
+  { id: 'percentile', label: 'Percentile', title: 'Stretched to 5th–95th percentile, clipping outliers' },
+  { id: 'zscore',     label: 'Std Dev',    title: 'Scaled by standard deviation — zero stays at zero' },
+];
+
 export function buildRingControls() {
   const c = document.getElementById('ringControls');
   c.innerHTML = '';
   c.style.cssText = 'display:flex;flex-direction:column;gap:0';
+
+  // Normalization mode selector
+  const normDiv = document.createElement('div');
+  normDiv.className = 'norm-section';
+  normDiv.innerHTML = `
+    <div class="panel-title" style="margin-bottom:.45rem">Normalization</div>
+    <div class="norm-btn-group" id="normBtnGroup">
+      ${NORM_MODES.map(m => `<button class="norm-btn${displayState.normMode === m.id ? ' active' : ''}" data-norm="${m.id}" title="${m.title}">${m.label}</button>`).join('')}
+    </div>`;
+  normDiv.addEventListener('click', e => {
+    const btn = e.target.closest('[data-norm]');
+    if (!btn) return;
+    displayState.normMode = btn.dataset.norm;
+    normDiv.querySelectorAll('.norm-btn').forEach(b => b.classList.toggle('active', b.dataset.norm === displayState.normMode));
+    _draw?.();
+  });
+  c.appendChild(normDiv);
+
+  const divider = document.createElement('hr');
+  divider.className = 'divider';
+  divider.style.margin = '.5rem 0 .4rem';
+  c.appendChild(divider);
 
   ringOrder.forEach((id, idx) => {
     const r = RING_DEFS.find(r => r.id === id);

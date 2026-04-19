@@ -2,7 +2,7 @@ import { RING_DEFS, RING_LABELS } from '../data/ringDefs.js';
 import { canvas, ringState, currentData } from '../state.js';
 import { doy2angle, polar, norm } from './canvas.js';
 
-export function drawMinMaxMarkers(layouts) {
+export function drawMinMaxMarkers(layouts, normBounds) {
   const { ctx, W, CX, CY } = canvas;
   RING_DEFS.forEach(r => {
     const s = ringState[r.id];
@@ -12,13 +12,14 @@ export function drawMinMaxMarkers(layouts) {
     const innerR = innerFrac * W;
     const maxThick = thickFrac * W;
     const cfg = RING_LABELS[r.id];
+    const { lo, hi } = normBounds?.[r.id] ?? { lo: r.normLo, hi: r.normHi };
 
     let maxD = 0, minD = 0;
     data.forEach((v, i) => { if (v > data[maxD]) maxD = i; if (v < data[minD]) minD = i; });
 
     [[maxD, 'max'], [minD, 'min']].forEach(([dayIdx, type]) => {
       const val = data[dayIdx];
-      const peakR = innerR + norm(val, r.normLo, r.normHi) * maxThick;
+      const peakR = innerR + norm(val, lo, hi) * maxThick;
       const angle = doy2angle(dayIdx + 0.5);
       const tickInner = peakR + W * .004;
       const tickOuter = peakR + W * .018;
