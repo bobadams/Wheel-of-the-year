@@ -155,7 +155,7 @@ async function main() {
   // with IQR trimming, and Gaussian-smooths to a 365-point daily curve.
   process.stdout.write('Fetching MODIS NDVI (selecting best pixel within 10 km, 10-year baseline):\n');
   let lastPct = -1;
-  const { ndvi, sampLat, sampLon } = await fetchModisNDVI(LAT, LON, pct => {
+  const { ndvi, sampLat, sampLon, peakKey: ndviPeakKey, troughKey: ndviTroughKey } = await fetchModisNDVI(LAT, LON, pct => {
     if (pct !== lastPct) { process.stdout.write(`\r  ${pct}%`); lastPct = pct; }
   });
   process.stdout.write(`\r  done. Sampled pixel: ${sampLat.toFixed(5)}, ${sampLon.toFixed(5)}\n`);
@@ -184,6 +184,7 @@ async function main() {
       ndvi,
       wind,
       windDir,
+      ndviPeakKey, ndviTroughKey,
       resolution: 'daily (ERA5 archive 1991–2020 normals)',
       meta: {
         temp:     { sourceInterval: 'daily',      source: 'ERA5 archive 1991–2020', years: '1991–2020' },

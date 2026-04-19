@@ -2215,6 +2215,8 @@ const OAKLAND = {
       114.5,
       337.4
     ],
+    "ndviPeakKey": "A2022097",
+    "ndviTroughKey": "A2022241",
     "resolution": "daily (ERA5 archive 1991–2020 normals)",
     "meta": {
       "temp": {
