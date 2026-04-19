@@ -108,11 +108,77 @@ function julianKey(year, doy1based) {
   return `A${year}${String(Math.min(doy1based, 365)).padStart(3, '0')}`;
 }
 
+// Fetch a single MODIS date over a km-radius window; returns the pixel grid.
+async function fetchPixelGrid(lat, lon, dateKey, km) {
+  const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
+    + `latitude=${lat}&longitude=${lon}`
+    + `&startDate=${dateKey}&endDate=${dateKey}`
+    + `&kmAboveBelow=${km}&kmLeftRight=${km}`;
+  try {
+    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(60_000) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const row = (d.subset || []).find(s => s.band === '250m_16_days_NDVI');
+    if (!row?.data?.length) return null;
+    const scale = row.scale ?? 0.0001;
+    const side = Math.round(Math.sqrt(row.data.length));
+    return {
+      nrows: row.nrows ?? side,
+      ncols: row.ncols ?? side,
+      pixels: row.data.map(v => { const s = v * scale; return s > -0.2 && s <= 1.0 ? s : null; }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Find the nearby pixel (within ~3 km) with the greatest seasonal NDVI contrast.
+// Fetches one peak-green date and one peak-brown date, compares all pixels in the
+// window, and returns the coordinates of the most seasonal one.
+async function findSeasonalPixel(lat, lon) {
+  const SCREEN_KM = 3;
+  const PIXEL_KM  = 0.25; // MOD13Q1 native resolution
+  const KM_PER_DEG = 111.0;
+
+  process.stdout.write('Finding best seasonal NDVI pixel in 3 km radius… ');
+  const [gridA, gridB] = await Promise.all([
+    fetchPixelGrid(lat, lon, 'A2022065', SCREEN_KM), // ~Mar 6 — peak green
+    fetchPixelGrid(lat, lon, 'A2022209', SCREEN_KM), // ~Jul 28 — peak brown
+  ]);
+  if (!gridA || !gridB) {
+    console.log('failed (API unreachable), using center pixel.');
+    return { lat, lon };
+  }
+
+  const { nrows, ncols, pixels: pxA } = gridA;
+  const { pixels: pxB } = gridB;
+  const centerRow = Math.floor(nrows / 2), centerCol = Math.floor(ncols / 2);
+
+  let bestContrast = -1, bestRow = centerRow, bestCol = centerCol;
+  for (let i = 0; i < pxA.length && i < pxB.length; i++) {
+    const a = pxA[i], b = pxB[i];
+    if (a === null || b === null) continue;
+    const contrast = Math.abs(a - b);
+    if (contrast > bestContrast) {
+      bestContrast = contrast;
+      bestRow = Math.floor(i / ncols);
+      bestCol = i % ncols;
+    }
+  }
+
+  const latAdj = lat + (bestRow - centerRow) * PIXEL_KM / KM_PER_DEG;
+  const lonAdj = lon + (bestCol - centerCol) * PIXEL_KM / (KM_PER_DEG * Math.cos(lat * Math.PI / 180));
+  console.log(`done.`);
+  console.log(`  [diag] seasonal pixel: ${latAdj.toFixed(5)}°N, ${lonAdj.toFixed(5)}°W  contrast=${bestContrast.toFixed(3)}  offset=(${bestRow - centerRow}, ${bestCol - centerCol})`);
+  console.log(`  [diag] https://www.google.com/maps?q=${latAdj.toFixed(5)},${lonAdj.toFixed(5)}`);
+  return { lat: latAdj, lon: lonAdj };
+}
+
 let _modisFirstRow = true; // print one raw-value diagnostic on first successful fetch
 
-async function fetchModisBatch(startKey, endKey, attempt = 1) {
+async function fetchModisBatch(lat, lon, startKey, endKey, attempt = 1) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
-    + `latitude=${LAT}&longitude=${LON}`
+    + `latitude=${lat}&longitude=${lon}`
     + `&startDate=${startKey}&endDate=${endKey}`
     + `&kmAboveBelow=2&kmLeftRight=2`;
   try {
@@ -130,16 +196,18 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
           const raw0 = row.data[0], scale = row.scale ?? 0.0001;
           console.log(`  [diag] date=${row.calendar_date} nPixels=${row.data.length} scale=${row.scale} raw[0]=${raw0} → scaled=${+(raw0 * scale).toFixed(4)}`);
         }
-        const vals = row.data.map(v => v * (row.scale ?? 0.0001)).filter(v => v > -0.2 && v <= 1.0);
-        if (!vals.length) return null;
-        return { date: row.calendar_date, value: vals.reduce((a, b) => a + b, 0) / vals.length };
+        // Use center pixel (index 0 for km=0) instead of averaging all pixels
+        const scale = row.scale ?? 0.0001;
+        const center = row.data[0] * scale;
+        if (center <= -0.2 || center > 1.0) return null;
+        return { date: row.calendar_date, value: center };
       })
       .filter(Boolean);
     return results;
   } catch (e) {
     if (attempt < 3) {
       await new Promise(res => setTimeout(res, attempt * 2000));
-      return fetchModisBatch(startKey, endKey, attempt + 1);
+      return fetchModisBatch(lat, lon, startKey, endKey, attempt + 1);
     }
     console.warn(`  MODIS ${startKey}–${endKey}: ${e.message}`);
     return [];
@@ -147,13 +215,15 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
 }
 
 async function fetchModisNDVI(startYear, endYear) {
+  // Find the nearby pixel with the strongest seasonal contrast
+  const { lat: sampLat, lon: sampLon } = await findSeasonalPixel(LAT, LON);
   const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
   const BATCH = 10; // API max per request
   const CONCURRENCY = 5; // parallel requests
   const doySum = new Array(365).fill(0);
   const doyCnt = new Array(365).fill(0);
 
-  // Build flat list of all batch tasks
+  // Build flat list of all batch tasks using the seasonal pixel coordinates
   const tasks = [];
   for (let year = startYear; year <= endYear; year++) {
     for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
@@ -166,7 +236,7 @@ async function fetchModisNDVI(startYear, endYear) {
   let done = 0;
   const active = new Set();
   for (const [startKey, endKey] of tasks) {
-    const p = fetchModisBatch(startKey, endKey).then(results => {
+    const p = fetchModisBatch(sampLat, sampLon, startKey, endKey).then(results => {
       active.delete(p);
       process.stdout.write(results.length ? '.' : 'x');
       if (++done % 13 === 0) process.stdout.write(` ${done}/${tasks.length}\n`);
