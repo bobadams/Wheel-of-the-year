@@ -52,7 +52,7 @@ export async function fetchRecentNDVI(lat, lon) {
 
   const results = [];
   for (let i = 0; i < allDates.length; i += 10) {
-    try { results.push(...await fetchModisBatch(lat, lon, allDates.slice(i, i + 10))); }
+    try { const b = allDates.slice(i, i + 10); results.push(...await fetchModisBatch(lat, lon, b[0], b[b.length - 1])); }
     catch (e) { console.warn('Recent NDVI batch failed', e); }
     if (i + 10 < allDates.length) await new Promise(res => setTimeout(res, 120));
   }
