@@ -114,7 +114,7 @@ async function fetchModisBatch(startKey, endKey, attempt = 1) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${LAT}&longitude=${LON}`
     + `&startDate=${startKey}&endDate=${endKey}`
-    + `&kmAboveBelow=0&kmLeftRight=0`;
+    + `&kmAboveBelow=2&kmLeftRight=2`;
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(60_000) });
     if (!r.ok) { console.warn(`  MODIS ${startKey}–${endKey}: HTTP ${r.status}`); return []; }

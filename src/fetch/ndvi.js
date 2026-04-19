@@ -2,9 +2,9 @@ function modisJulianKey(year, doy) {
   return `A${year}${String(doy).padStart(3, '0')}`;
 }
 
-export async function fetchModisBatch(lat, lon, dates) {
+export async function fetchModisBatch(lat, lon, startKey, endKey) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
-    + `latitude=${lat}&longitude=${lon}&startDate=${dates[0]}&endDate=${dates[dates.length - 1]}`
+    + `latitude=${lat}&longitude=${lon}&startDate=${startKey}&endDate=${endKey}`
     + `&kmAboveBelow=0&kmLeftRight=0`;
   const r = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
@@ -12,14 +12,14 @@ export async function fetchModisBatch(lat, lon, dates) {
   return (d.subset || [])
     .filter(s => s.band === '250m_16_days_NDVI')
     .map(row => {
-      const vals = row.data.map(v => v * (row.scale ?? 0.0001)).filter(v => v > -0.2 && v <= 1.0);
+      const scale = row.scale ?? 0.0001;
+      const vals = row.data.map(v => v * scale).filter(v => v > -0.2 && v <= 1.0);
       if (!vals.length) return null;
       return { date: row.calendar_date, value: vals.reduce((a, b) => a + b, 0) / vals.length };
     })
     .filter(Boolean);
 }
 
-// Fetch a single MODIS date over a km-radius window; returns the pixel grid.
 async function fetchPixelGrid(lat, lon, dateKey, km) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${lat}&longitude=${lon}`
@@ -43,19 +43,17 @@ async function fetchPixelGrid(lat, lon, dateKey, km) {
   }
 }
 
-// Find the nearby pixel (within ~3 km) with the greatest seasonal NDVI contrast.
-// Fetches one peak-green date and one peak-brown date concurrently, compares all
-// pixels in the window, and returns the coordinates of the most seasonal one.
-// Using |contrast| works for both hemispheres (seasons are simply inverted).
+// Find the pixel within 10 km with the greatest seasonal NDVI amplitude.
+// Uses two dates 6 months apart; abs(difference) works for both hemispheres.
 // Falls back to original coords if the API is unreachable or data is missing.
 async function findSeasonalPixel(lat, lon) {
-  const SCREEN_KM = 3;
-  const PIXEL_KM  = 0.25; // MOD13Q1 native resolution
+  const SCREEN_KM  = 10;
+  const PIXEL_KM   = 0.25;
   const KM_PER_DEG = 111.0;
 
   const [gridA, gridB] = await Promise.all([
-    fetchPixelGrid(lat, lon, 'A2022065', SCREEN_KM), // ~Mar 6 — NH spring green / SH late summer
-    fetchPixelGrid(lat, lon, 'A2022209', SCREEN_KM), // ~Jul 28 — NH summer dry  / SH winter green
+    fetchPixelGrid(lat, lon, 'A2022001', SCREEN_KM), // Jan 1  — NH winter trough / SH summer peak
+    fetchPixelGrid(lat, lon, 'A2022193', SCREEN_KM), // Jul 12 — NH summer peak   / SH winter trough
   ]);
   if (!gridA || !gridB) return { lat, lon };
 
@@ -81,29 +79,29 @@ async function findSeasonalPixel(lat, lon) {
 }
 
 export async function fetchModisNDVI(lat, lon, onProgress) {
-  // Find the nearby pixel with the strongest seasonal contrast before the main fetch.
   onProgress(0);
   const { lat: sampLat, lon: sampLon } = await findSeasonalPixel(lat, lon);
 
-  const years = [2019, 2020, 2021, 2022];
+  // 10-year baseline (2013–2022) at full 16-day composite cadence.
+  // Each year produces 3 API calls (batches of 10 DOYs); 10 years = 30 calls total.
+  const years = [2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022];
   const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
-  const BATCH = 10; // API max per request
-  const CONCURRENCY = 5; // parallel requests
+  const BATCH = 10;
+  const CONCURRENCY = 5;
 
-  // Build flat task list using the best-contrast sample coordinates
   const tasks = [];
   for (const y of years) {
     for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
       const batch = MODIS_DOYS.slice(i, i + BATCH);
-      tasks.push([sampLat, sampLon, [modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]]);
+      tasks.push([sampLat, sampLon, modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]);
     }
   }
   const total = tasks.length;
   let done = 0;
   const results = [];
   const active = new Set();
-  for (const [la, lo, dates] of tasks) {
-    const p = fetchModisBatch(la, lo, dates).then(r => {
+  for (const [la, lo, startKey, endKey] of tasks) {
+    const p = fetchModisBatch(la, lo, startKey, endKey).then(r => {
       active.delete(p);
       results.push(...r);
       onProgress(Math.round(++done / total * 100));
@@ -113,32 +111,50 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
   }
   await Promise.all(active);
 
-  // Accumulate NDVI per DOY across years
-  const doySum = new Array(365).fill(0), doyCnt = new Array(365).fill(0);
+  // Group raw values by DOY across all years for IQR-trimmed averaging.
+  // Each composite slot (e.g. Jan 1) gets up to 10 values, one per year.
   const dim = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const doyBuckets = Array.from({ length: 365 }, () => []);
   results.forEach(({ date, value }) => {
     const [, mo, dy] = date.split('-').map(Number);
     let doy = 0;
     for (let m = 0; m < mo - 1; m++) doy += dim[m];
-    doy = Math.min(doy + dy - 1, 364);
-    for (let dd = 0; dd < 16; dd++) { const d2 = (doy + dd) % 365; doySum[d2] += value; doyCnt[d2]++; }
+    doyBuckets[Math.min(doy + dy - 1, 364)].push(value);
   });
 
-  let raw = doySum.map((s, i) => doyCnt[i] > 0 ? s / doyCnt[i] : null);
+  // IQR-trimmed mean: drop the single min and max when ≥ 5 samples available.
+  // This discards anomalous drought/fire years without needing extra API calls.
+  let raw = doyBuckets.map(vals => {
+    const n = vals.length;
+    if (n === 0) return null;
+    if (n < 5) return vals.reduce((a, b) => a + b, 0) / n;
+    const sorted = [...vals].sort((a, b) => a - b);
+    const trimmed = sorted.slice(1, -1);
+    return trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
+  });
 
-  // Fill nulls by interpolation
+  // Fill short gaps by linear interpolation (3 passes covers 16-day inter-composite gaps).
   for (let pass = 0; pass < 3; pass++) {
     for (let i = 0; i < 365; i++) {
-      if (raw[i] === null) {
-        const prev = raw[(i + 364) % 365], next = raw[(i + 1) % 365];
-        raw[i] = prev !== null && next !== null ? (prev + next) / 2
-               : prev !== null ? prev : next;
-      }
+      if (raw[i] !== null) continue;
+      const prev = raw[(i + 364) % 365], next = raw[(i + 1) % 365];
+      raw[i] = prev !== null && next !== null ? (prev + next) / 2
+             : prev !== null ? prev : next;
     }
   }
 
-  // Gaussian smoothing to remove 16-day staircase artifacts
-  const sigma = 7, kernelR = 14;
+  // Fallback for any persistent nulls: use circular mean of non-null values within ±30 days.
+  const anchors = raw.map((v, i) => v !== null ? { i, v } : null).filter(Boolean);
+  if (anchors.length > 0) {
+    for (let i = 0; i < 365; i++) {
+      if (raw[i] !== null) continue;
+      const nearby = anchors.filter(({ i: j }) => Math.min(Math.abs(j - i), 365 - Math.abs(j - i)) <= 30);
+      if (nearby.length > 0) raw[i] = nearby.reduce((a, { v }) => a + v, 0) / nearby.length;
+    }
+  }
+
+  // Gaussian smoothing to remove inter-composite staircase artifacts.
+  const sigma = 5, kernelR = 12;
   const gauss = x => Math.exp(-0.5 * (x / sigma) ** 2);
   const ndvi = raw.map((_, i) => {
     let sum = 0, wt = 0;
@@ -148,6 +164,7 @@ export async function fetchModisNDVI(lat, lon, onProgress) {
     }
     return Math.round((wt > 0 ? sum / wt : 0) * 1000) / 1000;
   });
+
   const sampMapUrl = `https://www.google.com/maps?q=${sampLat.toFixed(5)},${sampLon.toFixed(5)}`;
   return { ndvi, sampLat, sampLon, sampMapUrl };
 }
