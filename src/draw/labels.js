@@ -30,10 +30,10 @@ export function drawMinMaxMarkers(layouts) {
       ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
 
       const [dx, dy] = polar(CX, CY, angle, tickOuter + W * .006);
-      ctx.fillStyle = s.color; ctx.globalAlpha = 1.0;
-      ctx.beginPath(); ctx.arc(dx, dy, W * .005, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = s.color; ctx.globalAlpha = 1.0;
+      ctx.beginPath(); ctx.arc(dx, dy, W * .005, 0, Math.PI * 2); ctx.stroke();
 
-      const [lx, ly] = polar(CX, CY, angle, tickOuter + W * .032);
+      const [lx, ly] = polar(CX, CY, angle, tickOuter + W * .024);
       ctx.save();
       ctx.translate(lx, ly);
       let rot = angle + Math.PI / 2;
@@ -42,10 +42,9 @@ export function drawMinMaxMarkers(layouts) {
       ctx.rotate(rot);
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const fs = W * .016;
+      const word = type === 'max' ? cfg.maxWord : cfg.minWord;
       ctx.font = `italic ${fs}px 'Crimson Pro',serif`; ctx.fillStyle = s.color; ctx.globalAlpha = 0.75;
-      ctx.fillText(type === 'max' ? cfg.maxWord : cfg.minWord, 0, -fs * .7);
-      ctx.font = `600 ${fs}px Cinzel,serif`; ctx.globalAlpha = 0.90;
-      ctx.fillText(cfg.fmt(val), 0, fs * .75);
+      ctx.fillText(`${word}: ${cfg.fmt(val)}`, 0, 0);
       ctx.restore(); ctx.restore();
     });
   });
