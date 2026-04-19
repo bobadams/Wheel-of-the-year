@@ -5,6 +5,14 @@ export function doy2angle(d) {
   return (d / 365) * Math.PI * 2 + SOLSTICE_OFFSET;
 }
 
+// Inverse of doy2angle: maps a canvas angle (e.g. from atan2) to a 0-indexed
+// day of year. Normalizes the result into [0, 365).
+export function angle2doy(angle) {
+  let frac = (angle - SOLSTICE_OFFSET) / (Math.PI * 2);
+  frac = ((frac % 1) + 1) % 1;
+  return frac * 365;
+}
+
 export function polar(cx, cy, a, r) {
   return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
 }
