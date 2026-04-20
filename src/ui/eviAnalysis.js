@@ -448,8 +448,8 @@ function renderPanel(canvasEl, bgCanvas, pixels, nrows, ncols, colorFn, bestIdx,
 
 // ── Public entry point ─────────────────────────────────────────────────────────
 export async function showEviAnalysis() {
-  const lat  = currentData.eviSampLat  ?? currentData.lat;
-  const lon  = currentData.eviSampLon  ?? currentData.lon;
+  const lat  = currentData.lat;
+  const lon  = currentData.lon;
   const name = currentData.name ?? '';
 
   injectStyles();

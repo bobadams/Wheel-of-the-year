@@ -158,7 +158,7 @@ export async function fetchModisEVI(lat, lon, onProgress) {
   for (const y of years) {
     for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
       const batch = MODIS_DOYS.slice(i, i + BATCH);
-      tasks.push([sampLat, sampLon, modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]);
+      tasks.push([lat, lon, modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]);
     }
   }
   const total = tasks.length;
