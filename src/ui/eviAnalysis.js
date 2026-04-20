@@ -102,14 +102,9 @@ function eviRgb(v) {
 
 function diffRgb(v, maxAbs) {
   if (v === null) return null;
-  const t = Math.max(-1, Math.min(1, v / (maxAbs || 0.4)));
-  if (t >= 0) {
-    const i = Math.round(t * 220);
-    return [255 - i, 255, 255 - i];         // white → green
-  } else {
-    const i = Math.round(-t * 220);
-    return [255, 255 - i, 255 - i];         // white → red
-  }
+  const t = Math.max(0, Math.min(1, v / (maxAbs || 0.4)));
+  const i = Math.round(t * 220);
+  return [255, 255 - i, 255 - i];           // white → red
 }
 
 // ── EVI overlay ────────────────────────────────────────────────────────────────
@@ -621,7 +616,7 @@ export async function showEviAnalysis() {
     { color: [40, 160, 40],  label: 'Healthy (0.30–0.45)' },
     { color: [10, 100, 20],  label: 'Dense (> 0.45)' },
     { color: [255, 255, 255], label: 'No change (diff panel)' },
-    { color: [10, 100, 20],  label: 'High contrast (diff panel)' },
+    { color: [255, 35, 35],  label: 'High seasonal change (diff panel)' },
     { color: [255, 255, 0],  label: '★ Selected pixel', border: true },
   ].forEach(({ color, label, border }) => {
     const item = document.createElement('div');
