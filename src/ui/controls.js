@@ -1,7 +1,7 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { ringOrder, ringState, displayState, currentData } from '../state.js';
 import { rebuildLegend } from './legend.js';
-import { showNdviAnalysis } from './ndviAnalysis.js';
+import { showEviAnalysis } from './eviAnalysis.js';
 
 // draw is passed in to avoid a circular dependency (main.js owns draw)
 let _draw = null;
@@ -78,7 +78,7 @@ export function buildRingControls() {
             ${NORM_MODES.map(m => `<button class="norm-btn${s.normMode === m.id ? ' active' : ''}" data-id="${id}" data-norm="${m.id}" title="${m.title}">${m.label}</button>`).join('')}
           </div>
         </div>
-        ${id === 'ndvi' ? `<div class="misc-row" style="padding-left:1.3rem"><a id="ndvi-map-link" href="" target="_blank" style="display:none;font-size:.75rem">View sampled pixel on map</a></div>` : ''}
+        ${id === 'evi' ? `<div class="misc-row" style="padding-left:1.3rem"><a id="evi-map-link" href="" target="_blank" style="display:none;font-size:.75rem">View sampled pixel on map</a></div>` : ''}
       </div>`;
 
     // Drag-to-reorder
@@ -121,10 +121,10 @@ export function refreshSourceBadges() {
     }
   });
 
-  const mapLink = document.getElementById('ndvi-map-link');
+  const mapLink = document.getElementById('evi-map-link');
   if (mapLink) {
-    const sampLat = currentData.meta?.ndvi?.sampLat;
-    const sampLon = currentData.meta?.ndvi?.sampLon;
+    const sampLat = currentData.eviSampLat;
+    const sampLon = currentData.eviSampLon;
     const hasPx = sampLat != null && sampLon != null;
     if (hasPx) {
       mapLink.textContent = `reference location: ${sampLat.toFixed(4)}, ${sampLon.toFixed(4)}`;
@@ -133,7 +133,7 @@ export function refreshSourceBadges() {
       // Replace listener each time badges are refreshed (avoid duplicates)
       const fresh = mapLink.cloneNode(true);
       mapLink.parentNode.replaceChild(fresh, mapLink);
-      fresh.addEventListener('click', e => { e.preventDefault(); showNdviAnalysis(); });
+      fresh.addEventListener('click', e => { e.preventDefault(); showEviAnalysis(); });
     } else {
       mapLink.style.display = 'none';
     }

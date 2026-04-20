@@ -3,8 +3,8 @@ import { canvas, ringOrder, ringState, displayState, currentData, actuals } from
 import { doy2angle, norm, SOLSTICE_OFFSET } from '../draw/canvas.js';
 import { DIM, MON_S } from '../draw/decorations.js';
 
-const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', ndvi: '🌿', wind: '💨' };
-const ACTUALS_RINGS = new Set(['temp', 'rain', 'ndvi']);
+const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', evi: '🌿', wind: '💨' };
+const ACTUALS_RINGS = new Set(['temp', 'rain', 'evi']);
 
 export function setupTooltip() {
   const tip = document.getElementById('tooltip');
@@ -32,14 +32,14 @@ export function setupTooltip() {
     const rows = ringOrder.filter(id => ringState[id].visible).map(id => {
       const r = RING_DEFS.find(r => r.id === id);
       const v = currentData[id][doy];
-      const disp = id === 'ndvi' ? v.toFixed(3) : id === 'rain' ? v.toFixed(2) : Math.round(v * 10) / 10;
+      const disp = id === 'evi' ? v.toFixed(3) : id === 'rain' ? v.toFixed(2) : Math.round(v * 10) / 10;
       let actual = '';
       if (actuals && displayState.actuals && ACTUALS_RINGS.has(id)) {
         const entries = actuals[id];
         if (entries?.length) {
           const entry = entries.reduce((b, x) => Math.abs(x.doy - doy) < Math.abs(b.doy - doy) ? x : b, entries[0]);
           if (Math.abs(entry.doy - doy) <= 8) {
-            const ad   = id === 'ndvi' ? entry.value.toFixed(3) : id === 'rain' ? entry.value.toFixed(2) : Math.round(entry.value * 10) / 10;
+            const ad   = id === 'evi' ? entry.value.toFixed(3) : id === 'rain' ? entry.value.toFixed(2) : Math.round(entry.value * 10) / 10;
             const diff = Math.round((entry.value - v) * 10) / 10;
             actual = ` <span style="opacity:.7;font-size:.85em">(actual: ${ad}, ${diff > 0 ? '+' : ''}${diff})</span>`;
           }

@@ -103,9 +103,9 @@ export function drawCenter() {
     ctx.font = `italic ${W * .020}px 'Crimson Pro',serif`; ctx.globalAlpha = .50;
     ctx.fillText(parts[1], CX, CY + W * .016);
   }
-  if (currentData.ndviSource) {
+  if (currentData.eviSource) {
     ctx.font = `italic ${W * .014}px 'Crimson Pro',serif`; ctx.globalAlpha = .35;
-    ctx.fillText('NDVI: ' + currentData.ndviSource, CX, CY + W * .044);
+    ctx.fillText('EVI: ' + currentData.eviSource, CX, CY + W * .044);
   }
   if (actuals) {
     const tLen = actuals.temp?.length ?? 0;

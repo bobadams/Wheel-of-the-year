@@ -9,6 +9,7 @@ export function drawMinMaxMarkers(layouts, normBounds) {
     if (!s.visible || !layouts[r.id]) return;
     const dispData = (s.smooth && smoothedData[r.id]) ? smoothedData[r.id] : currentData[r.id];
     const refData  = smoothedData[r.id] ?? currentData[r.id];
+    if (!Array.isArray(refData)) return;
     const { innerFrac, thickFrac } = layouts[r.id];
     const innerR = innerFrac * W;
     const maxThick = thickFrac * W;
