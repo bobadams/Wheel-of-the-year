@@ -259,7 +259,7 @@ export function showRingChart(ringId) {
         </div>
         ${hasActuals ? `<div class="rc-legend-item">
           <div class="rc-swatch" style="background:none;border-top:1.5px dashed ${color}"></div>
-          Actuals (past 6 mo)
+          Actuals (past 11 mo)
         </div>` : ''}
       </div>
     </div>`;

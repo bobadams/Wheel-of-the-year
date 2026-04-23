@@ -33,7 +33,7 @@ export function setCurrentData(data) {
 }
 export function setActivePreset(name) { activePreset = name; }
 
-// Actuals overlay (past ~6 months of real observations)
+// Actuals overlay (past ~11 months of real observations)
 export let actuals = null;
 export let todayDOY = null;
 

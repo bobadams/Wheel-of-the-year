@@ -20,7 +20,7 @@ export function rebuildLegend() {
   if (displayState.actuals) {
     const actualsEntry = document.createElement('div');
     actualsEntry.className = 'legend-item';
-    actualsEntry.innerHTML = `<div style="width:16px;height:0;border-top:1.5px dashed #888;flex-shrink:0;margin:4px 0"></div> <span style="font-style:italic">actuals (past 6 months)</span>`;
+    actualsEntry.innerHTML = `<div style="width:16px;height:0;border-top:1.5px dashed #888;flex-shrink:0;margin:4px 0"></div> <span style="font-style:italic">actuals (past 11 months)</span>`;
     el.appendChild(actualsEntry);
   }
 }
