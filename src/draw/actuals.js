@@ -1,4 +1,3 @@
-import { RING_DEFS } from '../data/ringDefs.js';
 import { canvas, ringState, actuals, todayDOY } from '../state.js';
 import { doy2angle, polar, norm, catmullRomPath } from './canvas.js';
 
@@ -54,10 +53,6 @@ export function drawActualsLine(ringDef, entries, layout, normBounds) {
     pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
   }
   ctx.stroke();
-  [pts[0], pts[pts.length - 1]].forEach(({ x, y }) => {
-    ctx.beginPath(); ctx.arc(x, y, W * 0.005, 0, Math.PI * 2);
-    ctx.fillStyle = s.color; ctx.globalAlpha = 1; ctx.fill();
-  });
   ctx.restore();
 }
 
@@ -66,38 +61,34 @@ export function drawTodayDot(layouts, normBounds) {
   const { ctx, W, CX, CY } = canvas;
   const angle = doy2angle(todayDOY + 0.5);
 
-  let outerR = 0;
-  ['temp', 'rain', 'evi', 'wind', 'pm25'].forEach(id => {
-    const r = RING_DEFS.find(r => r.id === id);
-    if (!r || !ringState[id].visible || !layouts[id]) return;
-    const entries = actuals?.[id];
-    if (!entries?.length) return;
-    const entry = entries.reduce((best, e) =>
-      Math.abs(e.doy - todayDOY) < Math.abs(best.doy - todayDOY) ? e : best, entries[0]);
-    const { lo, hi } = normBounds?.[id] ?? { lo: r.normLo, hi: r.normHi };
-    const rr = layouts[id].innerFrac * W + norm(entry.value, lo, hi) * layouts[id].thickFrac * W;
-    if (rr > outerR) outerR = rr;
-  });
-  if (outerR === 0) return;
-
-  const dotR = outerR + W * 0.014;
-  const [x, y] = polar(CX, CY, angle, dotR);
+  // Hairline red line from center to just past the moon ring (W * 0.430)
+  const lineEnd = W * 0.448;
+  const [x2, y2] = polar(CX, CY, angle, lineEnd);
   ctx.save();
-  ctx.beginPath(); ctx.arc(x, y, W * 0.011, 0, Math.PI * 2);
-  ctx.fillStyle = '#faf7f2'; ctx.globalAlpha = 0.92; ctx.fill();
-  ctx.beginPath(); ctx.arc(x, y, W * 0.007, 0, Math.PI * 2);
-  ctx.fillStyle = '#2c2416'; ctx.globalAlpha = 1; ctx.fill();
+  ctx.strokeStyle = '#cc2200';
+  ctx.lineWidth = 0.8;
+  ctx.globalAlpha = 0.82;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(CX, CY);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
 
-  const [lx, ly] = polar(CX, CY, angle, dotR + W * 0.024);
+  // "today" label just past the line tip
+  const labelR = lineEnd + W * 0.020;
+  const [lx, ly] = polar(CX, CY, angle, labelR);
   ctx.save();
   ctx.translate(lx, ly);
   let rot = angle + Math.PI / 2;
   const nr = ((rot % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   if (nr > Math.PI / 2 && nr < Math.PI * 3 / 2) rot += Math.PI;
   ctx.rotate(rot);
-  ctx.font = `italic ${W * .016}px 'Crimson Pro',serif`;
-  ctx.fillStyle = '#2c2416'; ctx.globalAlpha = 0.65;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `italic ${W * 0.016}px 'Crimson Pro',serif`;
+  ctx.fillStyle = '#cc2200';
+  ctx.globalAlpha = 0.85;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
   ctx.fillText('today', 0, 0);
-  ctx.restore(); ctx.restore();
+  ctx.restore();
+  ctx.restore();
 }
