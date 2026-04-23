@@ -17,11 +17,12 @@ import { drawActualsLine, drawTodayDot } from './draw/actuals.js';
 import { geocode, fetchClimateAPI, aggregateClimate } from './fetch/climate.js';
 import { fetchModisEVI, eviProxyFallback } from './fetch/evi.js';
 import { fetchPm25 } from './fetch/pm25.js';
-import { fetchActuals, fetchRecentEVI } from './fetch/actuals.js';
+import { fetchActuals, fetchRecentEVI, fetchActualsPm25 } from './fetch/actuals.js';
 import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
 import { setupTooltip } from './ui/tooltip.js';
+import { showRingChart } from './ui/ringChart.js';
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
 function draw() {
@@ -50,7 +51,7 @@ function draw() {
   ctx.restore();
 
   if (actuals && displayState.actuals) {
-    ['temp', 'rain', 'evi'].forEach(id => {
+    ['temp', 'rain', 'evi', 'wind', 'pm25'].forEach(id => {
       const r = RING_DEFS.find(r => r.id === id);
       if (r && actuals[id] && layouts[id]) drawActualsLine(r, actuals[id], layouts[id], normBounds);
     });
@@ -124,18 +125,26 @@ async function fetchCity() {
     draw();
 
     // Actuals overlay (non-blocking)
-    setStatus('loading', 'Fetching actuals for past 6 months…');
+    setStatus('loading', 'Fetching actuals for past year…');
     try {
       const w = await fetchActuals(geo.lat, geo.lon);
       setTodayDOY(w.todayDOY);
-      setActuals({ temp: w.temp, rain: w.rain, evi: null });
+      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null });
       draw();
       setStatus('ok', `${shortName} — normals + actuals loaded. Today = DOY ${w.todayDOY}.`);
 
       try {
-        const recentEvi = await fetchRecentEVI(geo.lat, geo.lon);
+        const recentEvi = await fetchRecentEVI(
+          currentData.eviSampLat ?? geo.lat,
+          currentData.eviSampLon ?? geo.lon,
+        );
         if (recentEvi?.length) { actuals.evi = recentEvi; draw(); }
       } catch { /* EVI actuals optional */ }
+
+      try {
+        const recentPm25 = await fetchActualsPm25(geo.lat, geo.lon);
+        if (recentPm25?.length) { actuals.pm25 = recentPm25; draw(); }
+      } catch { /* PM2.5 actuals optional */ }
     } catch (e) {
       setStatus('error', `Normals loaded. Actuals failed: ${e.message}`);
     }
@@ -189,6 +198,38 @@ function init() {
   draw();
   setupTooltip();
 
+  canvas.el.addEventListener('mousemove', e => {
+    const rect = canvas.el.getBoundingClientRect();
+    const sx = canvas.W / rect.width, sy = canvas.H / rect.height;
+    const dx = (e.clientX - rect.left) * sx - canvas.CX;
+    const dy = (e.clientY - rect.top)  * sy - canvas.CY;
+    const rFrac = Math.sqrt(dx * dx + dy * dy) / canvas.W;
+    const layouts = computeRingLayouts();
+    const hit = ringOrder.some(id => {
+      if (!ringState[id].visible || !layouts[id]) return false;
+      const { innerFrac, thickFrac } = layouts[id];
+      return rFrac >= innerFrac && rFrac <= innerFrac + thickFrac;
+    });
+    canvas.el.style.cursor = hit ? 'pointer' : 'default';
+  });
+
+  canvas.el.addEventListener('click', e => {
+    const rect = canvas.el.getBoundingClientRect();
+    const sx = canvas.W / rect.width, sy = canvas.H / rect.height;
+    const dx = (e.clientX - rect.left) * sx - canvas.CX;
+    const dy = (e.clientY - rect.top)  * sy - canvas.CY;
+    const rFrac = Math.sqrt(dx * dx + dy * dy) / canvas.W;
+    const layouts = computeRingLayouts();
+    for (const id of ringOrder) {
+      if (!ringState[id].visible || !layouts[id]) continue;
+      const { innerFrac, thickFrac } = layouts[id];
+      if (rFrac >= innerFrac && rFrac <= innerFrac + thickFrac) {
+        showRingChart(id);
+        return;
+      }
+    }
+  });
+
   // Wire up buttons/inputs that use onclick in HTML via module-scope exposure
   window.fetchCity   = fetchCity;
   window.loadPreset  = loadPreset;
@@ -197,6 +238,30 @@ function init() {
 
   document.getElementById('cityInput').addEventListener('keydown', e => { if (e.key === 'Enter') fetchCity(); });
   window.addEventListener('resize', () => { resizeCanvas(); draw(); });
+
+  // Fetch actuals for the default preset on load
+  (async () => {
+    const { lat, lon } = PRESETS[0].data;
+    setStatus('loading', 'Fetching actuals for past year…');
+    try {
+      const w = await fetchActuals(lat, lon);
+      setTodayDOY(w.todayDOY);
+      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null });
+      draw();
+      setStatus('ok', `${currentData.name} — preset + actuals loaded. Today = DOY ${w.todayDOY}.`);
+      try {
+        const { eviSampLat, eviSampLon } = PRESETS[0].data;
+        const recentEvi = await fetchRecentEVI(eviSampLat ?? lat, eviSampLon ?? lon);
+        if (recentEvi?.length) { actuals.evi = recentEvi; draw(); }
+      } catch { /* EVI actuals optional */ }
+      try {
+        const recentPm25 = await fetchActualsPm25(lat, lon);
+        if (recentPm25?.length) { actuals.pm25 = recentPm25; draw(); }
+      } catch { /* PM2.5 actuals optional */ }
+    } catch (e) {
+      setStatus('error', `Preset loaded. Actuals failed: ${e.message}`);
+    }
+  })();
 
   // Build preset buttons
   const presetsEl = document.getElementById('presetsEl');

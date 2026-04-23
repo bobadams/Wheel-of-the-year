@@ -1,4 +1,4 @@
-import { fetchPixelGrid, fetchModisBatch, fetchAnnualSeries } from '../fetch/evi.js';
+import { fetchPixelGrid, fetchAnnualSeries } from '../fetch/evi.js';
 import { currentData } from '../state.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -159,72 +159,8 @@ function findBestIdx(pxA, pxB, nrows, ncols) {
   return bestIdx;
 }
 
-// ── Time series ────────────────────────────────────────────────────────────────
-function modisJulianKey(year, doy) {
-  return `A${year}${String(doy).padStart(3, '0')}`;
-}
-
-async function fetchTimeSeries(lat, lon) {
-  const years = [2019, 2020, 2021, 2022, 2023];
-  const DOYS  = Array.from({ length: 23 }, (_, i) => 1 + i * 16);
-  const BATCH = 10;
-  const tasks = [];
-  for (const y of years) {
-    for (let i = 0; i < DOYS.length; i += BATCH) {
-      const slice = DOYS.slice(i, i + BATCH);
-      tasks.push(fetchModisBatch(lat, lon, modisJulianKey(y, slice[0]), modisJulianKey(y, slice[slice.length - 1])));
-    }
-  }
-  return (await Promise.all(tasks)).flat();
-}
-
-// Group raw multi-year points by DOY, return per-slot avg ± range.
-// Each slot holds up to N years of data (one value per year).
-function averageByDOY(points) {
-  const dims = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  const buckets = {};
-  for (const { date, value } of points) {
-    const [, mo, dy] = date.split('-').map(Number);
-    let doy = dy;
-    for (let m = 0; m < mo - 1; m++) doy += dims[m];
-    if (!buckets[doy]) buckets[doy] = [];
-    buckets[doy].push(value);
-  }
-  return Object.entries(buckets)
-    .map(([doy, vals]) => ({
-      doy: Number(doy),
-      value: vals.reduce((a, b) => a + b, 0) / vals.length,
-      lo:    Math.min(...vals),
-      hi:    Math.max(...vals),
-      n:     vals.length,
-    }))
-    .sort((a, b) => a.doy - b.doy);
-}
-
-// Remove inter-composite sawtooth noise with two passes of a 1-2-1 triangular
-// weighted average.  With 23 data points the effective kernel spans ~5 slots
-// (~80 days), which smooths noisy composites while preserving the seasonal
-// signal.  Endpoints are left unchanged (no wrap-around artefact).
-function smoothAvgPoints(pts) {
-  if (pts.length < 3) return pts;
-  let arr = pts;
-  for (let pass = 0; pass < 2; pass++) {
-    arr = arr.map((p, i) => {
-      if (i === 0 || i === arr.length - 1) return p;
-      const prev = arr[i - 1], next = arr[i + 1];
-      return {
-        ...p,
-        value: (prev.value + 2 * p.value + next.value) / 4,
-        lo:    (prev.lo    + 2 * p.lo    + next.lo   ) / 4,
-        hi:    (prev.hi    + 2 * p.hi    + next.hi   ) / 4,
-      };
-    });
-  }
-  return arr;
-}
-
-// Draw a single-year DOY chart with averaged line + year-spread band.
-function drawTimeSeries(canvas, avgPoints) {
+// Draw the EVI seasonal profile using the same 365-day array shown on the wheel.
+function drawTimeSeries(canvas, eviArray) {
   const ctx = canvas.getContext('2d');
   const W   = canvas.width, H = canvas.height;
   const PAD = { t: 22, r: 16, b: 28, l: 44 };
@@ -235,15 +171,15 @@ function drawTimeSeries(canvas, avgPoints) {
   ctx.fillStyle = '#faf7f2';
   ctx.fillRect(0, 0, W, H);
 
-  if (!avgPoints?.length) {
+  if (!eviArray?.length) {
     ctx.fillStyle = '#888'; ctx.font = '13px Crimson Pro, serif'; ctx.textAlign = 'center';
-    ctx.fillText('No time series data available', W / 2, H / 2);
+    ctx.fillText('No EVI data available', W / 2, H / 2);
     return;
   }
 
-  // x: DOY 1–365, y: EVI 0–1
-  const toX = doy => PAD.l + (doy - 1) / 364 * pw;
-  const toY = v   => PAD.t + (1 - Math.max(0, Math.min(1, v))) * ph;
+  // x: 0-based DOY 0–364, y: EVI 0–1
+  const toX = i => PAD.l + i / 364 * pw;
+  const toY = v => PAD.t + (1 - Math.max(0, Math.min(1, v))) * ph;
 
   // ── Horizontal grid + Y labels ──
   ctx.font = '10px sans-serif'; ctx.fillStyle = '#999'; ctx.textAlign = 'right';
@@ -254,13 +190,13 @@ function drawTimeSeries(canvas, avgPoints) {
     ctx.fillText(v.toFixed(1), PAD.l - 5, y + 3.5);
   });
 
-  // ── Month dividers + labels ──
-  const MONTH_STARTS = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335];
+  // ── Month dividers + labels (0-based DOY starts) ──
+  const MONTH_STARTS = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
   const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   ctx.font = '10px sans-serif'; ctx.fillStyle = '#aaa'; ctx.textAlign = 'center';
   MONTH_STARTS.forEach((doy, i) => {
     const x     = toX(doy);
-    const nextX = toX(MONTH_STARTS[i + 1] ?? 366);
+    const nextX = toX(MONTH_STARTS[i + 1] ?? 365);
     ctx.strokeStyle = '#d8d0c4'; ctx.lineWidth = 0.5;
     ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + ph); ctx.stroke();
@@ -268,50 +204,24 @@ function drawTimeSeries(canvas, avgPoints) {
     ctx.fillText(MONTH_LABELS[i], (x + nextX) / 2, PAD.t + ph + 14);
   });
 
-  // ── Year-spread band (min–max across years) ──
+  // ── Area fill ──
   ctx.save();
   ctx.beginPath();
-  // forward along hi edge
-  for (let i = 0; i < avgPoints.length; i++) {
-    const { doy, hi } = avgPoints[i];
-    i === 0 ? ctx.moveTo(toX(doy), toY(hi)) : ctx.lineTo(toX(doy), toY(hi));
-  }
-  // backward along lo edge
-  for (let i = avgPoints.length - 1; i >= 0; i--) {
-    const { doy, lo } = avgPoints[i];
-    ctx.lineTo(toX(doy), toY(lo));
-  }
-  ctx.closePath();
-  ctx.fillStyle = '#27ae60'; ctx.globalAlpha = 0.12;
-  ctx.fill();
-  ctx.restore();
-
-  // ── Area fill under average line ──
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(toX(avgPoints[0].doy), toY(0));
-  for (const { doy, value } of avgPoints) ctx.lineTo(toX(doy), toY(value));
-  ctx.lineTo(toX(avgPoints[avgPoints.length - 1].doy), toY(0));
+  ctx.moveTo(toX(0), toY(0));
+  eviArray.forEach((v, i) => ctx.lineTo(toX(i), toY(v)));
+  ctx.lineTo(toX(364), toY(0));
   ctx.closePath();
   ctx.fillStyle = '#27ae60'; ctx.globalAlpha = 0.20;
   ctx.fill();
   ctx.restore();
 
-  // ── Average line ──
+  // ── Line ──
   ctx.save();
   ctx.strokeStyle = '#27ae60'; ctx.lineWidth = 1.8;
   ctx.beginPath();
-  avgPoints.forEach(({ doy, value }, i) => {
-    i === 0 ? ctx.moveTo(toX(doy), toY(value)) : ctx.lineTo(toX(doy), toY(value));
-  });
+  eviArray.forEach((v, i) => i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v)));
   ctx.stroke();
   ctx.restore();
-
-  // ── Dots on average ──
-  ctx.fillStyle = '#27ae60';
-  for (const { doy, value } of avgPoints) {
-    ctx.beginPath(); ctx.arc(toX(doy), toY(value), 2.5, 0, Math.PI * 2); ctx.fill();
-  }
 
   // ── Y-axis label ──
   ctx.save();
@@ -487,7 +397,7 @@ export async function showEviAnalysis() {
       <div id="evi-map-status" class="evi-loading">Loading satellite imagery and EVI grids…</div>
 
       <div class="evi-ts-panel" style="display:none" id="evi-ts-wrap">
-        <div class="evi-ts-title">EVI seasonal profile · selected pixel · 5-year average (2019–2023) with year-to-year range</div>
+        <div class="evi-ts-title">EVI seasonal profile · 10-year baseline (2013–2022)</div>
         <canvas id="evi-timeseries" width="${TS_W}" height="${TS_H}"></canvas>
       </div>
       <div id="evi-ts-status" class="evi-loading" style="display:none"></div>
@@ -634,20 +544,11 @@ export async function showEviAnalysis() {
     renderAllPanels(currentOpacity);
   });
 
-  // ── Step 3: fetch + draw time series ──
-  const tsStatusEl = overlay.querySelector('#evi-ts-status');
-  const tsWrapEl   = overlay.querySelector('#evi-ts-wrap');
-  tsStatusEl.textContent = 'Fetching time series for selected pixel…';
-  tsStatusEl.style.display = '';
-
-  try {
-    const rawPoints = await fetchTimeSeries(pixLat, pixLon);
-    const avgPoints = smoothAvgPoints(averageByDOY(rawPoints));
-    tsStatusEl.style.display = 'none';
-    tsWrapEl.style.display   = '';
-    const tsCanvas = overlay.querySelector('#evi-timeseries');
-    drawTimeSeries(tsCanvas, avgPoints);
-  } catch (e) {
-    tsStatusEl.textContent = `Time series unavailable: ${e.message}`;
+  // ── Step 3: draw time series from already-loaded wheel data ──
+  const tsWrapEl = overlay.querySelector('#evi-ts-wrap');
+  overlay.querySelector('#evi-ts-status').style.display = 'none';
+  if (Array.isArray(currentData.evi)) {
+    tsWrapEl.style.display = '';
+    drawTimeSeries(overlay.querySelector('#evi-timeseries'), currentData.evi);
   }
 }

@@ -2,6 +2,7 @@ import { canvas } from '../state.js';
 import { doy2angle, norm } from './canvas.js';
 
 export function drawRing(data, lo, hi, innerR, maxThick, color, alpha, blankZero = false, rawData = null) {
+  if (!data) return;
   const { ctx, CX, CY } = canvas;
   const raw = rawData ?? data;
   ctx.save();

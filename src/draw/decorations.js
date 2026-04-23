@@ -5,8 +5,25 @@ export const DIM     = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 export const MON_S   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 export const MON_L   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-const MOON_FULL = [26,  55,  85, 112, 142, 170, 202, 231, 259, 288, 316, 345];
-const MOON_NEW  = [11,  40,  71, 100, 130, 158, 187, 216, 245, 274, 302, 331];
+function computeMoonPhases(year) {
+  const SYNODIC = 29.530588853;
+  const msPerDay = 86400000;
+  const j2000 = Date.UTC(2000, 0, 1, 12, 0, 0);
+  const startJD = 2451545.0 + (Date.UTC(year, 0, 1) - j2000) / msPerDay;
+  const endJD   = 2451545.0 + (Date.UTC(year + 1, 0, 1) - j2000) / msPerDay;
+  const refJD = 2451550.09765; // Meeus k=0 mean new moon (Jan 6, 2000 14:21 UTC)
+  const kStart = Math.floor((startJD - refJD) / SYNODIC) - 1;
+  const newMoons = [], fullMoons = [];
+  for (let k = kStart; k <= kStart + 15; k++) {
+    const newJD  = refJD + k * SYNODIC;
+    const fullJD = refJD + (k + 0.5) * SYNODIC;
+    if (newJD  >= startJD && newJD  < endJD) newMoons.push( Math.floor(newJD  - startJD));
+    if (fullJD >= startJD && fullJD < endJD) fullMoons.push(Math.floor(fullJD - startJD));
+  }
+  return { newMoons, fullMoons };
+}
+
+const { newMoons: MOON_NEW, fullMoons: MOON_FULL } = computeMoonPhases(new Date().getFullYear());
 
 export function drawMoon() {
   const { ctx, W, CX, CY } = canvas;
@@ -78,7 +95,7 @@ export function drawAxes() {
   ctx.save();
   ctx.font = `italic ${W * .019}px 'Crimson Pro',serif`;
   ctx.fillStyle = '#2c2416'; ctx.globalAlpha = .48; ctx.textAlign = 'center';
-  const ld = R + W * .038;
+  const ld = W * .455;
   [
     { doy: SUMMER, t: 'Summer\nSolstice' },
     { doy: WINTER, t: 'Winter\nSolstice' },

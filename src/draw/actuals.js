@@ -1,6 +1,6 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { canvas, ringState, actuals, todayDOY } from '../state.js';
-import { doy2angle, polar, norm } from './canvas.js';
+import { doy2angle, polar, norm, catmullRomPath } from './canvas.js';
 
 export function smoothEntries(entries, winDays = 7) {
   return entries.map(e => {
@@ -20,21 +20,41 @@ export function drawActualsLine(ringDef, entries, layout, normBounds) {
   const { ctx, W, CX, CY } = canvas;
   const innerR = layout.innerFrac * W;
   const maxThick = layout.thickFrac * W;
-  const smoothed = smoothEntries(entries, 5);
   const { lo, hi } = normBounds?.[ringDef.id] ?? { lo: ringDef.normLo, hi: ringDef.normHi };
 
-  ctx.save();
-  ctx.strokeStyle = s.color; ctx.lineWidth = W * 0.007; ctx.globalAlpha = 1.0;
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
-  smoothed.forEach((e, i) => {
+  // Deduplicate by DOY, keeping the most recent value (last in chronological order).
+  // Entries spanning a full year have the same DOY twice (e.g. today a year apart).
+  const dedupMap = new Map();
+  entries.forEach(e => dedupMap.set(e.doy, e.value));
+  const deduped = Array.from(dedupMap, ([doy, value]) => ({ doy, value }))
+    .sort((a, b) => a.doy - b.doy);
+
+  const smoothed = smoothEntries(deduped, 5);
+
+  // Order so the arc runs from (todayDOY+1) → 364 → 0 → todayDOY, leaving a
+  // gap at today's position rather than connecting today to last year's data.
+  const ordered = todayDOY !== null
+    ? [...smoothed.filter(e => e.doy > todayDOY), ...smoothed.filter(e => e.doy <= todayDOY)]
+    : smoothed;
+
+  const pts = ordered.map(e => {
     const r = innerR + norm(e.value, lo, hi) * maxThick;
     const [x, y] = polar(CX, CY, doy2angle(e.doy + 0.5), r);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    return { x, y };
   });
+
+  ctx.save();
+  ctx.strokeStyle = s.color; ctx.lineWidth = W * 0.002; ctx.globalAlpha = 1.0;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.setLineDash([W * 0.008, W * 0.008]);
+  ctx.beginPath();
+  if (pts.length < 50) {
+    catmullRomPath(ctx, pts);
+  } else {
+    pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  }
   ctx.stroke();
-  [smoothed[0], smoothed[smoothed.length - 1]].forEach(e => {
-    const r = innerR + norm(e.value, lo, hi) * maxThick;
-    const [x, y] = polar(CX, CY, doy2angle(e.doy + 0.5), r);
+  [pts[0], pts[pts.length - 1]].forEach(({ x, y }) => {
     ctx.beginPath(); ctx.arc(x, y, W * 0.005, 0, Math.PI * 2);
     ctx.fillStyle = s.color; ctx.globalAlpha = 1; ctx.fill();
   });
@@ -47,7 +67,7 @@ export function drawTodayDot(layouts, normBounds) {
   const angle = doy2angle(todayDOY + 0.5);
 
   let outerR = 0;
-  ['temp', 'rain', 'evi'].forEach(id => {
+  ['temp', 'rain', 'evi', 'wind', 'pm25'].forEach(id => {
     const r = RING_DEFS.find(r => r.id === id);
     if (!r || !ringState[id].visible || !layouts[id]) return;
     const entries = actuals?.[id];
