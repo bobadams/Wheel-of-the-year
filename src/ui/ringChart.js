@@ -258,7 +258,7 @@ export function showRingChart(ringId) {
           ${normalsLabel}
         </div>
         ${hasActuals ? `<div class="rc-legend-item">
-          <div class="rc-swatch" style="background:${color};height:3px"></div>
+          <div class="rc-swatch" style="background:none;border-top:1.5px dashed ${color}"></div>
           Actuals (past 6 mo)
         </div>` : ''}
       </div>

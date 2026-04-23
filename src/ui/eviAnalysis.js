@@ -527,7 +527,7 @@ export async function showEviAnalysis() {
     { color: [10, 100, 20],  label: 'Dense (> 0.45)' },
     { color: [255, 255, 255], label: 'No change (diff panel)' },
     { color: [255, 35, 35],  label: 'High seasonal change (diff panel)' },
-    { color: [255, 255, 0],  label: '★ Selected pixel', border: true },
+    { color: [255, 255, 255], label: '★ Selected pixel', border: true },
   ].forEach(({ color, label, border }) => {
     const item = document.createElement('div');
     item.className = 'evi-legend-item';
