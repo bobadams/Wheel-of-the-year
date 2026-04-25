@@ -36,7 +36,12 @@
     <div class="misc-row"><span class="misc-label">Solstice / equinox axes</span><button class="toggle on" onclick="toggleDisplay(this,'axis')"></button></div>
     <div class="misc-row"><span class="misc-label">Month tick labels</span><button class="toggle on" onclick="toggleDisplay(this,'ticks')"></button></div>
     <div class="misc-row"><span class="misc-label">Actuals overlay</span><button class="toggle on" id="actualsToggle" onclick="toggleDisplay(this,'actuals')"></button></div>
-    <div class="misc-row"><span class="misc-label">Wind barbs</span><button class="toggle" onclick="toggleDisplay(this,'windBarbs')" title="Meteorological wind barbs showing prevailing direction (requires live data)"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Smooth actuals</span><button class="toggle" onclick="toggleDisplay(this,'actualsSmooth')"></button></div>
+    <div class="misc-row"><span class="misc-label">Holidays</span><button class="toggle on" onclick="toggleDisplay(this,'holidays')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Christian</span><button class="toggle on" onclick="toggleDisplay(this,'holidayChristian')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Jewish</span><button class="toggle on" onclick="toggleDisplay(this,'holidayJewish')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Wiccan</span><button class="toggle on" onclick="toggleDisplay(this,'holidayWicca')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Islamic</span><button class="toggle on" onclick="toggleDisplay(this,'holidayIslamic')"></button></div>
     <hr class="divider">
     <button class="btn btn-outline" style="width:100%;margin-top:.2rem" onclick="exportPNG()">⬇ Export PNG</button>
   </div>

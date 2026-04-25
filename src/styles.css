@@ -42,10 +42,16 @@ color: var(--ink-light); width: 18px; height: 18px; border-radius: 2px; cursor: 
 display:flex; align-items:center; justify-content:center; padding:0; line-height:1; }
 .reorder-btn:hover:not([disabled]) { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .reorder-btn[disabled] { opacity: .25; cursor: not-allowed; }
-.ring-subcontrols { display: flex; flex-direction: column; gap: .22rem; transition: opacity .2s; }
-.ring-header { display: flex; align-items: center; gap: .4rem; }
+.ring-subcontrols { display: flex; flex-direction: column; gap: .22rem; overflow: hidden;
+  max-height: 300px; transition: max-height .22s ease, opacity .15s; }
+.ring-subcontrols.collapsed { max-height: 0; opacity: 0 !important; }
+.ring-header { display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+.ring-header:hover .ring-name { color: var(--ink); }
 .ring-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .ring-name { flex: 1; font-size: .85rem; }
+.ring-chevron { font-size: .65rem; color: var(--ink-faint); flex-shrink: 0; width: 10px;
+  text-align: center; transition: transform .18s ease; user-select: none; }
+.ring-row.expanded .ring-chevron { transform: rotate(90deg); }
 .ring-source { font-size: .6rem; color: var(--ink-faint); font-family: 'Cinzel',serif; letter-spacing: .04em; margin-left: .35rem; border: 1px solid var(--border); border-radius: 3px; padding: 0 .3rem; white-space: nowrap; }
 .toggle { width: 28px; height: 15px; background: var(--border); border-radius: 8px; position: relative; cursor: pointer; border: none; outline: none; transition: background .2s; flex-shrink: 0; }
 .toggle.on { background: var(--ink); }

@@ -45,19 +45,21 @@ export function buildRingControls() {
     const r = RING_DEFS.find(r => r.id === id);
     const s = ringState[id];
     const div = document.createElement('div');
-    div.className = 'ring-row'; div.dataset.id = id; div.draggable = true;
+    if (s.collapsed === undefined) s.collapsed = true; // default: collapsed
+    div.className = `ring-row${s.collapsed ? '' : ' expanded'}`; div.dataset.id = id; div.draggable = true;
     div.innerHTML = `
-      <div class="ring-header">
+      <div class="ring-header" data-action="toggleCollapse" data-id="${id}">
+        <span class="ring-chevron">▶</span>
         <span class="drag-handle" title="Drag to reorder">⠿</span>
         <div class="ring-dot" id="dot-${id}" style="background:${s.color}"></div>
         <span class="ring-name">${r.label}<span class="ring-source" id="rs-${id}"></span></span>
-        <div class="reorder-btns">
+        <div class="reorder-btns" data-no-collapse>
           <button class="reorder-btn" data-id="${id}" data-dir="-1" title="Move inward" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="reorder-btn" data-id="${id}" data-dir="1"  title="Move outward" ${idx === ringOrder.length - 1 ? 'disabled' : ''}>↓</button>
         </div>
-        <button class="toggle ${s.visible ? 'on' : ''}" data-id="${id}" data-action="toggleRing"></button>
+        <button class="toggle ${s.visible ? 'on' : ''}" data-id="${id}" data-action="toggleRing" data-no-collapse></button>
       </div>
-      <div class="ring-subcontrols" style="${s.visible ? '' : 'opacity:.4;pointer-events:none'}">
+      <div class="ring-subcontrols${s.collapsed ? ' collapsed' : ''}" style="${s.visible ? '' : 'opacity:.4;pointer-events:none'}">
         <div class="slider-row">
           <span class="slider-label">Thickness</span>
           <input type="range" min=".2" max="2.5" step=".05" value="${s.thickness}" data-id="${id}" data-prop="thickness">
@@ -79,6 +81,7 @@ export function buildRingControls() {
           </div>
         </div>
         ${id === 'evi' ? `<div class="misc-row" style="padding-left:1.3rem"><a id="evi-map-link" href="" target="_blank" style="display:none;font-size:.75rem">View sampled pixel on map</a></div>` : ''}
+        ${id === 'wind' ? `<div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Wind direction</span><button class="toggle ${displayState.windBarbs ? 'on' : ''}" data-action="toggleWindBarbs" title="Show wind direction markers at the base of the wind ring"></button></div>` : ''}
       </div>`;
 
     // Drag-to-reorder
@@ -145,10 +148,22 @@ function handleControlClick(e) {
   if (reorderBtn) {
     moveRing(reorderBtn.dataset.id, Number(reorderBtn.dataset.dir)); return;
   }
+  // Collapse toggle — fires on header click, but not on buttons/inputs inside it
+  const header = e.target.closest('[data-action="toggleCollapse"]');
+  if (header && !e.target.closest('[data-no-collapse]')) {
+    const id = header.dataset.id;
+    const row = header.closest('.ring-row');
+    ringState[id].collapsed = !ringState[id].collapsed;
+    row.classList.toggle('expanded', !ringState[id].collapsed);
+    row.querySelector('.ring-subcontrols').classList.toggle('collapsed', ringState[id].collapsed);
+    return;
+  }
   const toggle = e.target.closest('[data-action="toggleRing"]');
   if (toggle) { toggleRing(toggle); return; }
   const smoothBtn = e.target.closest('[data-action="toggleSmooth"]');
   if (smoothBtn) { toggleSmooth(smoothBtn); return; }
+  const windBarbsBtn = e.target.closest('[data-action="toggleWindBarbs"]');
+  if (windBarbsBtn) { toggleDisplay(windBarbsBtn, 'windBarbs'); return; }
   const normBtn = e.target.closest('[data-norm][data-id]');
   if (normBtn) {
     const { id, norm } = normBtn.dataset;
