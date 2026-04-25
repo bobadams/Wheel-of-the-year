@@ -11,13 +11,15 @@ import { computeRingLayouts } from './draw/layout.js';
 import { drawRing } from './draw/ring.js';
 import { computeNormBounds } from './draw/normalize.js';
 import { drawMoon, drawTicks, drawAxes, drawCenter } from './draw/decorations.js';
+import { drawHolidays } from './draw/holidays.js';
 import { drawMinMaxMarkers } from './draw/labels.js';
 import { drawWindBarbs } from './draw/windBarbs.js';
 import { drawActualsLine, drawTodayDot } from './draw/actuals.js';
 import { geocode, fetchClimateAPI, aggregateClimate } from './fetch/climate.js';
 import { fetchModisEVI, eviProxyFallback } from './fetch/evi.js';
 import { fetchPm25 } from './fetch/pm25.js';
-import { fetchActuals, fetchRecentEVI, fetchActualsPm25 } from './fetch/actuals.js';
+import { fetchVisibility } from './fetch/visibility.js';
+import { fetchActuals, fetchRecentEVI, fetchActualsPm25, fetchActualsVisibility } from './fetch/actuals.js';
 import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
@@ -51,7 +53,7 @@ function draw() {
   ctx.restore();
 
   if (actuals && displayState.actuals) {
-    ['temp', 'rain', 'evi', 'wind', 'pm25'].forEach(id => {
+    ['temp', 'rain', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'].forEach(id => {
       const r = RING_DEFS.find(r => r.id === id);
       if (r && actuals[id] && layouts[id]) drawActualsLine(r, actuals[id], layouts[id], normBounds);
     });
@@ -59,10 +61,11 @@ function draw() {
   }
 
   drawMinMaxMarkers(layouts, normBounds);
-  if (displayState.windBarbs) drawWindBarbs(layouts);
-  if (displayState.moon)  drawMoon();
-  if (displayState.ticks) drawTicks();
-  if (displayState.axis)  drawAxes();
+  if (displayState.windBarbs)  drawWindBarbs(layouts);
+  if (displayState.moon)       drawMoon();
+  if (displayState.ticks)      drawTicks();
+  if (displayState.axis)       drawAxes();
+  if (displayState.holidays)   drawHolidays();
   drawCenter();
 }
 
@@ -81,6 +84,7 @@ async function fetchCity() {
 
     setStatus('loading', `Found ${shortName} — fetching climate normals…`);
     const climate = aggregateClimate(await fetchClimateAPI(geo.lat, geo.lon), geo.lat);
+    const { snowIn, cloudMean } = climate;
 
     setStatus('loading', 'Normals loaded — fetching MODIS EVI…');
     setEviProgress(true, 0, 'Fetching MODIS satellite data…');
@@ -101,11 +105,20 @@ async function fetchCity() {
       pm25 = await fetchPm25(geo.lat, geo.lon);
     } catch { /* PM2.5 is optional; ring will be blank if unavailable */ }
 
+    setStatus('loading', 'Fetching visibility normals…');
+    let visibility = null;
+    try {
+      visibility = await fetchVisibility(geo.lat, geo.lon);
+    } catch { /* visibility is optional; ring will be blank if unavailable */ }
+
     setCurrentData({
       name: shortName, lat: geo.lat, lon: geo.lon,
       temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
       evi, wind: climate.windMph, windDir: climate.windDir,
       pm25,
+      visibility,
+      snow: snowIn,
+      cloud: cloudMean,
       eviSampLat, eviSampLon, eviSampMapUrl,
       eviPeakKey, eviTroughKey,
       resolution: climate.resolution,
@@ -116,7 +129,10 @@ async function fetchCity() {
         daylight: { sourceInterval: 'calculated',  source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
         evi:      { sourceInterval: evi ? '16-day' : 'proxy', source: evi ? 'MODIS MOD13Q1 EVI 2013–2022' : 'ERA5-derived proxy' },
         wind:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
-        pm25:     { sourceInterval: 'hourly',      source: pm25 ? 'CAMS 2014–2023' : 'unavailable' },
+        pm25:       { sourceInterval: 'hourly',      source: pm25 ? 'CAMS 2014–2023' : 'unavailable' },
+        visibility: { sourceInterval: 'hourly',      source: visibility ? 'ERA5 2010–2020' : 'unavailable' },
+        snow:       { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
+        cloud:      { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
       },
     });
     setActivePreset('');
@@ -129,7 +145,7 @@ async function fetchCity() {
     try {
       const w = await fetchActuals(geo.lat, geo.lon);
       setTodayDOY(w.todayDOY);
-      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null });
+      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null, visibility: null, snow: w.snow, cloud: w.cloud });
       draw();
       setStatus('ok', `${shortName} — normals + actuals loaded. Today = DOY ${w.todayDOY}.`);
 
@@ -145,6 +161,11 @@ async function fetchCity() {
         const recentPm25 = await fetchActualsPm25(geo.lat, geo.lon);
         if (recentPm25?.length) { actuals.pm25 = recentPm25; draw(); }
       } catch { /* PM2.5 actuals optional */ }
+
+      try {
+        const recentVis = await fetchActualsVisibility(geo.lat, geo.lon);
+        if (recentVis?.length) { actuals.visibility = recentVis; draw(); }
+      } catch { /* visibility actuals optional */ }
     } catch (e) {
       setStatus('error', `Normals loaded. Actuals failed: ${e.message}`);
     }
@@ -246,7 +267,7 @@ function init() {
     try {
       const w = await fetchActuals(lat, lon);
       setTodayDOY(w.todayDOY);
-      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null });
+      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null, visibility: null, snow: w.snow, cloud: w.cloud });
       draw();
       setStatus('ok', `${currentData.name} — preset + actuals loaded. Today = DOY ${w.todayDOY}.`);
       try {

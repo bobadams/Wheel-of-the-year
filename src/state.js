@@ -3,20 +3,20 @@ import { PRESETS } from './data/presets.js';
 import { gaussianSmooth } from './utils/smooth.js';
 
 // Ring display order (innermost → outermost)
-export const ringOrder = ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25'];
+export const ringOrder = ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'];
 
 // Per-ring UI state
 export const ringState = {};
 RING_DEFS.forEach(r => {
-  ringState[r.id] = { visible: true, color: r.color, thickness: 1.0, opacity: 1.0, smooth: true, normMode: r.defaultNormMode };
+  ringState[r.id] = { visible: r.defaultVisible !== false, color: r.color, thickness: 1.0, opacity: 1.0, smooth: true, normMode: r.defaultNormMode };
 });
 
 // Global display toggles
-export const displayState = { moon: true, axis: true, ticks: true, actuals: true, windBarbs: false, ringGap: 0.010 };
+export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true };
 
 function precomputeSmoothed(data) {
   const out = {};
-  ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25'].forEach(id => {
+  ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'].forEach(id => {
     if (Array.isArray(data[id])) out[id] = gaussianSmooth(data[id]);
   });
   return out;
