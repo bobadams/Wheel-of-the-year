@@ -32,18 +32,21 @@
     <div id="ringControls"></div>
     <hr class="divider">
     <div class="panel-title">Display Options</div>
-    <div class="misc-row"><span class="misc-label">Moon phases</span><button class="toggle on" onclick="toggleDisplay(this,'moon')"></button></div>
-    <div class="misc-row"><span class="misc-label">Solstice / equinox axes</span><button class="toggle on" onclick="toggleDisplay(this,'axis')"></button></div>
-    <div class="misc-row"><span class="misc-label">Month tick labels</span><button class="toggle on" onclick="toggleDisplay(this,'ticks')"></button></div>
-    <div class="misc-row"><span class="misc-label">Actuals overlay</span><button class="toggle on" id="actualsToggle" onclick="toggleDisplay(this,'actuals')"></button></div>
-    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Smooth actuals</span><button class="toggle" onclick="toggleDisplay(this,'actualsSmooth')"></button></div>
-    <div class="misc-row"><span class="misc-label">Holidays</span><button class="toggle on" onclick="toggleDisplay(this,'holidays')"></button></div>
-    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Christian</span><button class="toggle on" onclick="toggleDisplay(this,'holidayChristian')"></button></div>
-    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Jewish</span><button class="toggle on" onclick="toggleDisplay(this,'holidayJewish')"></button></div>
-    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Wiccan</span><button class="toggle on" onclick="toggleDisplay(this,'holidayWicca')"></button></div>
-    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Islamic</span><button class="toggle on" onclick="toggleDisplay(this,'holidayIslamic')"></button></div>
+    <div class="misc-row"><span class="misc-label">Moon phases</span><button class="toggle on" data-display-key="moon" onclick="toggleDisplay(this,'moon')"></button></div>
+    <div class="misc-row"><span class="misc-label">Solstice / equinox axes</span><button class="toggle on" data-display-key="axis" onclick="toggleDisplay(this,'axis')"></button></div>
+    <div class="misc-row"><span class="misc-label">Month tick labels</span><button class="toggle on" data-display-key="ticks" onclick="toggleDisplay(this,'ticks')"></button></div>
+    <div class="misc-row"><span class="misc-label">Actuals overlay</span><button class="toggle on" id="actualsToggle" data-display-key="actuals" onclick="toggleDisplay(this,'actuals')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Smooth actuals</span><button class="toggle" data-display-key="actualsSmooth" onclick="toggleDisplay(this,'actualsSmooth')"></button></div>
+    <div class="misc-row"><span class="misc-label">Holidays</span><button class="toggle on" data-display-key="holidays" onclick="toggleDisplay(this,'holidays')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Christian</span><button class="toggle on" data-display-key="holidayChristian" onclick="toggleDisplay(this,'holidayChristian')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Jewish</span><button class="toggle on" data-display-key="holidayJewish" onclick="toggleDisplay(this,'holidayJewish')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Wiccan</span><button class="toggle on" data-display-key="holidayWicca" onclick="toggleDisplay(this,'holidayWicca')"></button></div>
+    <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Islamic</span><button class="toggle on" data-display-key="holidayIslamic" onclick="toggleDisplay(this,'holidayIslamic')"></button></div>
     <hr class="divider">
-    <button class="btn btn-outline" style="width:100%;margin-top:.2rem" onclick="exportSVG()">⬇ Export SVG</button>
+    <div style="display:flex;gap:.4rem;margin-top:.2rem">
+      <button class="btn btn-outline" style="flex:1" onclick="exportSVG()">⬇ Export SVG</button>
+      <button class="btn btn-outline" style="flex:1" id="copyLinkBtn" onclick="copyLink()">⎘ Copy Link</button>
+    </div>
   </div>
 </div>
 

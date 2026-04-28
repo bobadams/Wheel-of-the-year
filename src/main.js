@@ -6,7 +6,7 @@ import { PRESETS } from './data/presets.js';
 import {
   canvas, ringOrder, ringState, displayState,
   currentData, smoothedData, actuals,
-  setCurrentData, setActivePreset, setActuals, setTodayDOY,
+  setCurrentData, mergeCurrentData, setActivePreset, setActuals, setTodayDOY,
 } from './state.js';
 import { computeRingLayouts } from './draw/layout.js';
 import { drawRing } from './draw/ring.js';
@@ -83,11 +83,46 @@ async function fetchCity() {
     const geo = await geocode(q);
     const shortName = geo.name.split(',').slice(0, 2).join(',').trim();
 
+    // Draw immediately with just location so decorations/labels appear right away
+    setCurrentData({ name: shortName, lat: geo.lat, lon: geo.lon });
+    setActivePreset('');
+    refreshPresets();
+    refreshSourceBadges();
+    draw();
+
     setStatus('loading', `Found ${shortName} — fetching climate normals…`);
     const climate = aggregateClimate(await fetchClimateAPI(geo.lat, geo.lon), geo.lat);
-    const { snowIn, cloudMean } = climate;
 
-    setStatus('loading', 'Normals loaded — fetching MODIS EVI…');
+    // Draw climate rings as soon as normals arrive
+    mergeCurrentData({
+      temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
+      wind: climate.windMph, windDir: climate.windDir,
+      snow: climate.snowIn, cloud: climate.cloudMean,
+      resolution: climate.resolution,
+      meta: {
+        temp:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+        rain:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+        daylight: { sourceInterval: 'calculated', source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
+        evi:      { sourceInterval: 'pending',    source: 'fetching…' },
+        wind:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+        pm25:       { sourceInterval: 'hourly',   source: 'fetching…' },
+        visibility: { sourceInterval: 'hourly',   source: 'fetching…' },
+        snow:       { sourceInterval: 'daily',    source: 'ERA5 1991–2020' },
+        cloud:      { sourceInterval: 'daily',    source: 'ERA5 1991–2020' },
+      },
+    });
+    refreshSourceBadges();
+    draw();
+
+    // Actuals overlay — kick off in parallel with the slow fetches below
+    setStatus('loading', 'Normals loaded — fetching actuals + EVI…');
+    const actualsPromise = fetchActuals(geo.lat, geo.lon).then(w => {
+      setTodayDOY(w.todayDOY);
+      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null, visibility: null, snow: w.snow, cloud: w.cloud });
+      draw();
+    }).catch(() => {});
+
+    // EVI (slowest — draw as soon as it lands)
     setEviProgress(true, 0, 'Fetching MODIS satellite data…');
     let evi, eviSampLat = geo.lat, eviSampLon = geo.lon, eviSampMapUrl = null;
     let eviPeakKey = null, eviTroughKey = null;
@@ -99,77 +134,67 @@ async function fetchCity() {
       evi = eviProxyFallback(climate.tempF, climate.rainIn);
     }
     setEviProgress(false);
+    mergeCurrentData({
+      evi, eviSampLat, eviSampLon, eviSampMapUrl, eviPeakKey, eviTroughKey,
+      eviSource: evi ? 'MODIS EVI 2013–2022' : 'proxy',
+      meta: {
+        ...currentData.meta,
+        evi: { sourceInterval: evi ? '16-day' : 'proxy', source: evi ? 'MODIS MOD13Q1 EVI 2013–2022' : 'ERA5-derived proxy' },
+      },
+    });
+    refreshSourceBadges();
+    draw();
 
+    // PM2.5
     setStatus('loading', 'Fetching PM2.5 air quality normals…');
     let pm25 = null;
     try {
       pm25 = await fetchPm25(geo.lat, geo.lon);
-    } catch { /* PM2.5 is optional; ring will be blank if unavailable */ }
+    } catch { /* optional */ }
+    mergeCurrentData({
+      pm25,
+      meta: { ...currentData.meta, pm25: { sourceInterval: 'hourly', source: pm25 ? 'CAMS 2014–2023' : 'unavailable' } },
+    });
+    refreshSourceBadges();
+    draw();
 
+    // Visibility
     setStatus('loading', 'Fetching visibility normals…');
     let visibility = null;
     try {
       visibility = await fetchVisibility(geo.lat, geo.lon);
-    } catch { /* visibility is optional; ring will be blank if unavailable */ }
-
-    setCurrentData({
-      name: shortName, lat: geo.lat, lon: geo.lon,
-      temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
-      evi, wind: climate.windMph, windDir: climate.windDir,
-      pm25,
+    } catch { /* optional */ }
+    mergeCurrentData({
       visibility,
-      snow: snowIn,
-      cloud: cloudMean,
-      eviSampLat, eviSampLon, eviSampMapUrl,
-      eviPeakKey, eviTroughKey,
-      resolution: climate.resolution,
-      eviSource: evi ? 'MODIS EVI 2013–2022' : 'proxy',
-      meta: {
-        temp:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
-        rain:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
-        daylight: { sourceInterval: 'calculated',  source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
-        evi:      { sourceInterval: evi ? '16-day' : 'proxy', source: evi ? 'MODIS MOD13Q1 EVI 2013–2022' : 'ERA5-derived proxy' },
-        wind:     { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
-        pm25:       { sourceInterval: 'hourly',      source: pm25 ? 'CAMS 2014–2023' : 'unavailable' },
-        visibility: { sourceInterval: 'hourly',      source: visibility ? 'ERA5 2010–2020' : 'unavailable' },
-        snow:       { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
-        cloud:      { sourceInterval: 'daily',       source: 'ERA5 1991–2020' },
-      },
+      meta: { ...currentData.meta, visibility: { sourceInterval: 'hourly', source: visibility ? 'ERA5 2010–2020' : 'unavailable' } },
     });
-    setActivePreset('');
-    refreshPresets();
     refreshSourceBadges();
     draw();
 
-    // Actuals overlay (non-blocking)
-    setStatus('loading', 'Fetching actuals for past year…');
+    // Wait for actuals to finish before declaring done
+    await actualsPromise;
+    setStatus('ok', `${shortName} — loaded.`);
+
+    // EVI / PM2.5 / visibility actuals (non-blocking)
     try {
-      const w = await fetchActuals(geo.lat, geo.lon);
-      setTodayDOY(w.todayDOY);
-      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null, visibility: null, snow: w.snow, cloud: w.cloud });
-      draw();
-      setStatus('ok', `${shortName} — normals + actuals loaded. Today = DOY ${w.todayDOY}.`);
+      const recentEvi = await fetchRecentEVI(
+        currentData.eviSampLat ?? geo.lat,
+        currentData.eviSampLon ?? geo.lon,
+      );
+      if (recentEvi?.length) { actuals.evi = recentEvi; draw(); }
+    } catch { /* EVI actuals optional */ }
 
-      try {
-        const recentEvi = await fetchRecentEVI(
-          currentData.eviSampLat ?? geo.lat,
-          currentData.eviSampLon ?? geo.lon,
-        );
-        if (recentEvi?.length) { actuals.evi = recentEvi; draw(); }
-      } catch { /* EVI actuals optional */ }
+    try {
+      const recentPm25 = await fetchActualsPm25(geo.lat, geo.lon);
+      if (recentPm25?.length) { actuals.pm25 = recentPm25; draw(); }
+    } catch { /* PM2.5 actuals optional */ }
 
-      try {
-        const recentPm25 = await fetchActualsPm25(geo.lat, geo.lon);
-        if (recentPm25?.length) { actuals.pm25 = recentPm25; draw(); }
-      } catch { /* PM2.5 actuals optional */ }
+    try {
+      const recentVis = await fetchActualsVisibility(geo.lat, geo.lon);
+      if (recentVis?.length) { actuals.visibility = recentVis; draw(); }
+    } catch { /* visibility actuals optional */ }
 
-      try {
-        const recentVis = await fetchActualsVisibility(geo.lat, geo.lon);
-        if (recentVis?.length) { actuals.visibility = recentVis; draw(); }
-      } catch { /* visibility actuals optional */ }
-    } catch (e) {
-      setStatus('error', `Normals loaded. Actuals failed: ${e.message}`);
-    }
+    setStatus('ok', `${shortName} — all data loaded.`);
   } catch (e) {
     setStatus('error', e.message);
     setEviProgress(false);
@@ -192,6 +217,90 @@ function refreshPresets() {
   document.querySelectorAll('.preset-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.label === (PRESETS.find(p => p.label === b.dataset.label) ? b.dataset.label : ''));
   });
+}
+
+// ─── Copy link ───────────────────────────────────────────────────────────────
+function copyLink() {
+  const state = {
+    city: currentData.name || document.getElementById('cityInput').value.trim(),
+    order: [...ringOrder],
+    rings: Object.fromEntries(ringOrder.map(id => {
+      const s = ringState[id];
+      return [id, { v: s.visible ? 1 : 0, c: s.color, t: s.thickness, s: s.smooth ? 1 : 0, n: s.normMode }];
+    })),
+    disp: {
+      moon:          displayState.moon          ? 1 : 0,
+      axis:          displayState.axis          ? 1 : 0,
+      ticks:         displayState.ticks         ? 1 : 0,
+      actuals:       displayState.actuals       ? 1 : 0,
+      actualsSmooth: displayState.actualsSmooth ? 1 : 0,
+      windBarbs:     displayState.windBarbs     ? 1 : 0,
+      gap:           displayState.ringGap,
+      hol:  displayState.holidays          ? 1 : 0,
+      holC: displayState.holidayChristian  ? 1 : 0,
+      holJ: displayState.holidayJewish     ? 1 : 0,
+      holW: displayState.holidayWicca      ? 1 : 0,
+      holI: displayState.holidayIslamic    ? 1 : 0,
+    },
+  };
+  const url = `${location.origin}${location.pathname}?s=${encodeURIComponent(JSON.stringify(state))}`;
+  const btn = document.getElementById('copyLinkBtn');
+  navigator.clipboard.writeText(url).then(() => {
+    if (btn) { const orig = btn.textContent; btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = orig; }, 2000); }
+  }).catch(() => { prompt('Copy this link:', url); });
+}
+
+function applyUrlParams() {
+  const raw = new URLSearchParams(location.search).get('s');
+  if (!raw) return false;
+  let p;
+  try { p = JSON.parse(decodeURIComponent(raw)); } catch { return false; }
+
+  if (Array.isArray(p.order)) {
+    ringOrder.length = 0;
+    p.order.forEach(id => { if (ringState[id]) ringOrder.push(id); });
+  }
+
+  if (p.rings) {
+    Object.entries(p.rings).forEach(([id, r]) => {
+      if (!ringState[id]) return;
+      if (r.v !== undefined) ringState[id].visible    = !!r.v;
+      if (r.c !== undefined) ringState[id].color      = r.c;
+      if (r.t !== undefined) ringState[id].thickness  = r.t;
+      if (r.s !== undefined) ringState[id].smooth     = !!r.s;
+      if (r.n !== undefined) ringState[id].normMode   = r.n;
+    });
+  }
+
+  if (p.disp) {
+    const d = p.disp;
+    const map = {
+      moon: 'moon', axis: 'axis', ticks: 'ticks',
+      actuals: 'actuals', actualsSmooth: 'actualsSmooth', windBarbs: 'windBarbs',
+      hol: 'holidays', holC: 'holidayChristian', holJ: 'holidayJewish',
+      holW: 'holidayWicca', holI: 'holidayIslamic',
+    };
+    Object.entries(map).forEach(([k, dsKey]) => {
+      if (d[k] !== undefined) displayState[dsKey] = !!d[k];
+    });
+    if (d.gap !== undefined) displayState.ringGap = d.gap;
+  }
+
+  // Sync display toggle button classes
+  document.querySelectorAll('[data-display-key]').forEach(btn => {
+    btn.classList.toggle('on', !!displayState[btn.dataset.displayKey]);
+  });
+
+  // Rebuild ring controls with restored state (reads displayState.ringGap automatically)
+  buildRingControls();
+  rebuildLegend();
+
+  if (p.city) {
+    document.getElementById('cityInput').value = p.city;
+    fetchCity();
+  }
+
+  return true;
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
@@ -300,15 +409,29 @@ function init() {
   });
 
   // Wire up buttons/inputs that use onclick in HTML via module-scope exposure
-  window.fetchCity   = fetchCity;
-  window.loadPreset  = loadPreset;
-  window.exportSVG   = exportSVG;
+  window.fetchCity     = fetchCity;
+  window.loadPreset    = loadPreset;
+  window.exportSVG     = exportSVG;
+  window.copyLink      = copyLink;
   window.toggleDisplay = toggleDisplay;
 
   document.getElementById('cityInput').addEventListener('keydown', e => { if (e.key === 'Enter') fetchCity(); });
   window.addEventListener('resize', () => { resizeCanvas(); draw(); });
 
-  // Fetch actuals for the default preset on load
+  // Build preset buttons
+  const presetsEl = document.getElementById('presetsEl');
+  PRESETS.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn active';
+    btn.dataset.label = p.label;
+    btn.textContent = p.label;
+    btn.onclick = () => loadPreset(p);
+    presetsEl.appendChild(btn);
+  });
+
+  // Restore from URL params if present; otherwise fetch actuals for the default preset
+  if (applyUrlParams()) return;
+
   (async () => {
     const { lat, lon } = PRESETS[0].data;
     setStatus('loading', 'Fetching actuals for past year…');
@@ -331,17 +454,6 @@ function init() {
       setStatus('error', `Preset loaded. Actuals failed: ${e.message}`);
     }
   })();
-
-  // Build preset buttons
-  const presetsEl = document.getElementById('presetsEl');
-  PRESETS.forEach(p => {
-    const btn = document.createElement('button');
-    btn.className = 'preset-btn active';
-    btn.dataset.label = p.label;
-    btn.textContent = p.label;
-    btn.onclick = () => loadPreset(p);
-    presetsEl.appendChild(btn);
-  });
 }
 
 window.addEventListener('DOMContentLoaded', init);

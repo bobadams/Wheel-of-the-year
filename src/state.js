@@ -31,6 +31,10 @@ export function setCurrentData(data) {
   currentData = data;
   smoothedData = precomputeSmoothed(data);
 }
+export function mergeCurrentData(patch) {
+  currentData = { ...currentData, ...patch };
+  smoothedData = precomputeSmoothed(currentData);
+}
 export function setActivePreset(name) { activePreset = name; }
 
 // Actuals overlay (past ~11 months of real observations)

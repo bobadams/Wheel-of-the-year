@@ -53,10 +53,6 @@ export function buildRingControls() {
         <span class="drag-handle" title="Drag to reorder">⠿</span>
         <div class="ring-dot" id="dot-${id}" style="background:${s.color}"></div>
         <span class="ring-name">${r.label}<span class="ring-source" id="rs-${id}"></span></span>
-        <div class="reorder-btns" data-no-collapse>
-          <button class="reorder-btn" data-id="${id}" data-dir="-1" title="Move inward" ${idx === 0 ? 'disabled' : ''}>↑</button>
-          <button class="reorder-btn" data-id="${id}" data-dir="1"  title="Move outward" ${idx === ringOrder.length - 1 ? 'disabled' : ''}>↓</button>
-        </div>
         <button class="toggle ${s.visible ? 'on' : ''}" data-id="${id}" data-action="toggleRing" data-no-collapse></button>
       </div>
       <div class="ring-subcontrols${s.collapsed ? ' collapsed' : ''}" style="${s.visible ? '' : 'opacity:.4;pointer-events:none'}">
