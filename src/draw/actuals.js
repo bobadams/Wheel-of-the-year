@@ -1,4 +1,4 @@
-import { canvas, ringState, actuals, todayDOY } from '../state.js';
+import { canvas, ringState, displayState, actuals, todayDOY } from '../state.js';
 import { doy2angle, polar, norm, catmullRomPath } from './canvas.js';
 
 export function smoothEntries(entries, winDays = 7) {
@@ -28,7 +28,7 @@ export function drawActualsLine(ringDef, entries, layout, normBounds) {
   const deduped = Array.from(dedupMap, ([doy, value]) => ({ doy, value }))
     .sort((a, b) => a.doy - b.doy);
 
-  const smoothed = smoothEntries(deduped, 5);
+  const smoothed = displayState.actualsSmooth ? smoothEntries(deduped, 5) : deduped;
 
   // Order so the arc runs from (todayDOY+1) → 364 → 0 → todayDOY, leaving a
   // gap at today's position rather than connecting today to last year's data.
@@ -43,7 +43,7 @@ export function drawActualsLine(ringDef, entries, layout, normBounds) {
   });
 
   ctx.save();
-  ctx.strokeStyle = s.color; ctx.lineWidth = W * 0.002; ctx.globalAlpha = 1.0;
+  ctx.strokeStyle = s.color; ctx.lineWidth = W * 0.001; ctx.globalAlpha = 1.0;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.setLineDash([W * 0.008, W * 0.008]);
   ctx.beginPath();

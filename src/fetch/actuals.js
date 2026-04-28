@@ -17,25 +17,29 @@ export async function fetchActuals(lat, lon) {
   const url = `https://archive-api.open-meteo.com/v1/archive?`
     + `latitude=${lat}&longitude=${lon}`
     + `&start_date=${fmt(startDate)}&end_date=${todayStr}`
-    + `&daily=temperature_2m_mean,precipitation_sum,windspeed_10m_mean&timezone=auto`;
+    + `&daily=temperature_2m_max,precipitation_sum,windspeed_10m_mean,snow_depth_mean,cloudcover_mean&timezone=auto`;
 
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Actuals API error ${r.status}`);
   const d = await r.json();
   if (!d.daily?.time?.length) throw new Error('No actuals data returned');
 
-  const tempEntries = [], rainEntries = [], windEntries = [];
+  const tempEntries = [], rainEntries = [], windEntries = [], snowEntries = [], cloudEntries = [];
   d.daily.time.forEach((dateStr, i) => {
     const doy = calendarDOY(dateStr);
-    const tc = d.daily.temperature_2m_mean[i];
+    const tc = d.daily.temperature_2m_max[i];
     const p  = d.daily.precipitation_sum[i];
     const w  = d.daily.windspeed_10m_mean[i];
+    const sn = d.daily.snow_depth_mean?.[i];
+    const cl = d.daily.cloudcover_mean?.[i];
     if (tc != null) tempEntries.push({ doy, value: Math.round((tc * 9 / 5 + 32) * 10) / 10 });
     if (p  != null) rainEntries.push({ doy, value: Math.round(p / 25.4 * 1000) / 1000 });
     if (w  != null) windEntries.push({ doy, value: Math.round(w * 0.621371 * 10) / 10 });
+    if (sn != null) snowEntries.push({ doy, value: Math.round(sn * 39.3701 * 100) / 100 });
+    if (cl != null) cloudEntries.push({ doy, value: Math.round(cl * 10) / 10 });
   });
 
-  return { temp: tempEntries, rain: rainEntries, wind: windEntries, todayDOY: calendarDOY(todayStr) };
+  return { temp: tempEntries, rain: rainEntries, wind: windEntries, snow: snowEntries, cloud: cloudEntries, todayDOY: calendarDOY(todayStr) };
 }
 
 export async function fetchActualsPm25(lat, lon) {
@@ -66,6 +70,37 @@ export async function fetchActualsPm25(lat, lon) {
 
   return Object.entries(daySums)
     .map(([dateStr, sum]) => ({ doy: calendarDOY(dateStr), value: Math.round(sum / dayCnts[dateStr] * 100) / 100 }))
+    .sort((a, b) => a.doy - b.doy);
+}
+
+export async function fetchActualsVisibility(lat, lon) {
+  const now = new Date();
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const todayStr = fmt(now);
+  const startDate = new Date(now); startDate.setDate(startDate.getDate() - 350);
+
+  const url = `https://archive-api.open-meteo.com/v1/archive?`
+    + `latitude=${lat}&longitude=${lon}`
+    + `&start_date=${fmt(startDate)}&end_date=${todayStr}`
+    + `&hourly=visibility&timezone=auto`;
+
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Visibility actuals API error ${r.status}`);
+  const data = await r.json();
+  const { time, visibility } = data.hourly;
+
+  const daySums = {}, dayCnts = {};
+  time.forEach((ts, i) => {
+    const v = visibility[i];
+    if (v == null) return;
+    const dateStr = ts.slice(0, 10);
+    if (!daySums[dateStr]) { daySums[dateStr] = 0; dayCnts[dateStr] = 0; }
+    daySums[dateStr] += v;
+    dayCnts[dateStr]++;
+  });
+
+  return Object.entries(daySums)
+    .map(([dateStr, sum]) => ({ doy: calendarDOY(dateStr), value: Math.round(sum / dayCnts[dateStr] / 1609.34 * 100) / 100 }))
     .sort((a, b) => a.doy - b.doy);
 }
 

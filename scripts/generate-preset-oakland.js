@@ -19,6 +19,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchModisEVI } from '../src/fetch/evi.js';
 import { fetchPm25 } from '../src/fetch/pm25.js';
+import { fetchVisibility } from '../src/fetch/visibility.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -178,8 +179,18 @@ async function main() {
     process.stdout.write(`failed (${e.message}) — preset will have no PM2.5 data.\n`);
   }
 
+  // Visibility normals (Open-Meteo archive hourly, 2010–2020)
+  process.stdout.write('Fetching visibility normals (ERA5 hourly 2010–2020)… ');
+  let visibility = null;
+  try {
+    visibility = await fetchVisibility(LAT, LON);
+    process.stdout.write('done.\n');
+  } catch (e) {
+    process.stdout.write(`failed (${e.message}) — preset will have no visibility data.\n`);
+  }
+
   // Spot checks
-  const s = i => `temp=${temp[i]}°F  rain=${rain[i]}"  wind=${wind[i]}mph  daylight=${daylight[i]}h  evi=${evi[i]}  pm25=${pm25?.[i] ?? 'n/a'}`;
+  const s = i => `temp=${temp[i]}°F  rain=${rain[i]}"  wind=${wind[i]}mph  daylight=${daylight[i]}h  evi=${evi[i]}  pm25=${pm25?.[i] ?? 'n/a'}  vis=${visibility?.[i] ?? 'n/a'}mi`;
   console.log(`\nSpot checks:\n  Jan 1:  ${s(0)}\n  Apr 1:  ${s(90)}\n  Jul 1:  ${s(181)}\n  Oct 1:  ${s(273)}`);
 
   const preset = {
@@ -196,6 +207,7 @@ async function main() {
       wind,
       windDir,
       pm25,
+      visibility,
       eviPeakKey, eviTroughKey,
       eviSampLat: sampLat, eviSampLon: sampLon,
       eviSource: 'MODIS EVI 2013–2022',
@@ -207,7 +219,8 @@ async function main() {
         evi:      { sourceInterval: '16-day',     source: 'MODIS MOD13Q1 EVI 2013–2022', years: '2013–2022',
                     sampLat, sampLon },
         wind:     { sourceInterval: 'daily',      source: 'ERA5 archive 1991–2020', years: '1991–2020' },
-        pm25:     { sourceInterval: 'hourly',     source: pm25 ? 'CAMS 2014–2023' : 'unavailable', years: '2014–2023' },
+        pm25:       { sourceInterval: 'hourly',     source: pm25 ? 'CAMS 2014–2023' : 'unavailable', years: '2014–2023' },
+        visibility: { sourceInterval: 'hourly',     source: visibility ? 'ERA5 2010–2020' : 'unavailable', years: '2010–2020' },
       },
     },
   };

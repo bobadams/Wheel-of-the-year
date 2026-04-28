@@ -13,7 +13,7 @@ export async function geocode(q) {
 export async function fetchClimateAPI(lat, lon) {
   const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}`
     + `&start_date=1991-01-01&end_date=2020-12-31&timezone=UTC`
-    + `&daily=temperature_2m_max,precipitation_sum,windspeed_10m_mean,winddirection_10m_dominant`;
+    + `&daily=temperature_2m_max,precipitation_sum,windspeed_10m_mean,winddirection_10m_dominant,snow_depth_mean,cloudcover_mean`;
   const r = await fetch(url);
   if (!r.ok) throw new Error('Climate API error');
   return r.json();
@@ -47,12 +47,15 @@ export function aggregateClimate(d, lat) {
     precipitation_sum: precMM,
     windspeed_10m_mean: windKmh,
     winddirection_10m_dominant: windDirDeg,
+    snow_depth_mean: snowM,
+    cloudcover_mean: cloudPct,
   } = d.daily;
   const ts = new Array(365).fill(0), tc = new Array(365).fill(0);
   const rs = new Array(365).fill(0);
   const ws = new Array(365).fill(0), wc = new Array(365).fill(0);
-  // Circular components for direction averaging
   const dsx = new Array(365).fill(0), dsy = new Array(365).fill(0), dc = new Array(365).fill(0);
+  const snows = new Array(365).fill(0), snowc = new Array(365).fill(0);
+  const clouds = new Array(365).fill(0), cloudc = new Array(365).fill(0);
   time.forEach((t, i) => {
     const doy = dateToDoy(t);
     if (doy === null) return;
@@ -63,6 +66,8 @@ export function aggregateClimate(d, lat) {
       const r = windDirDeg[i] * Math.PI / 180;
       dsx[doy] += Math.cos(r); dsy[doy] += Math.sin(r); dc[doy]++;
     }
+    if (snowM?.[i]    != null) { snows[doy] += snowM[i];    snowc[doy]++; }
+    if (cloudPct?.[i] != null) { clouds[doy] += cloudPct[i]; cloudc[doy]++; }
   });
   const cnt = n => Math.max(n, 1);
   const tempF   = ts.map((s, i) => Math.round((s / cnt(tc[i]) * 9 / 5 + 32) * 10) / 10);
@@ -71,12 +76,17 @@ export function aggregateClimate(d, lat) {
   const windDir = dc.map((n, i) => n > 0
     ? ((Math.atan2(dsy[i] / n, dsx[i] / n) * 180 / Math.PI) + 360) % 360
     : null);
+  // snow_depth_mean is in meters; convert to inches
+  const snowIn  = snows.map((s, i) => Math.round(s / cnt(snowc[i]) * 39.3701 * 100) / 100);
+  const cloudMean = clouds.map((s, i) => Math.round(s / cnt(cloudc[i]) * 10) / 10);
 
   return {
     tempF,
     rainIn,
     windMph,
     windDir,
+    snowIn,
+    cloudMean,
     daylight: daylightDaily(lat),
     resolution: 'daily (ERA5 1991–2020)',
   };

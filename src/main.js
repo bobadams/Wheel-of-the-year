@@ -1,4 +1,5 @@
 import './styles.css';
+import C2S from 'canvas2svg';
 
 import { RING_DEFS } from './data/ringDefs.js';
 import { PRESETS } from './data/presets.js';
@@ -46,9 +47,9 @@ function draw() {
 
   // Outer decorative circles
   ctx.save();
-  ctx.beginPath(); ctx.arc(CX, CY, W * .425, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(CX, CY, W * .420, 0, Math.PI * 2);
   ctx.strokeStyle = '#b0a090'; ctx.lineWidth = 1; ctx.globalAlpha = .3; ctx.stroke();
-  ctx.beginPath(); ctx.arc(CX, CY, W * .442, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(CX, CY, W * .437, 0, Math.PI * 2);
   ctx.lineWidth = .5; ctx.globalAlpha = .18; ctx.stroke();
   ctx.restore();
 
@@ -194,11 +195,58 @@ function refreshPresets() {
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
-function exportPNG() {
-  const a = document.createElement('a');
-  a.download = `wheel-${currentData.name.replace(/[^a-z0-9]/gi, '_')}.png`;
-  a.href = canvas.el.toDataURL('image/png');
+function patchC2S(ctx) {
+  // canvas2svg v1.0.x omits several Canvas 2D methods; patch them onto the instance.
+  let _dash = [];
+  const _origStroke = ctx.stroke.bind(ctx);
+
+  ctx.setLineDash = arr => { _dash = arr ? [...arr] : []; };
+  ctx.getLineDash = () => [..._dash];
+
+  // Apply stroke-dasharray whenever stroke() is called so each path element
+  // inherits the correct dash pattern at the moment it is stroked.
+  ctx.stroke = function (...args) {
+    _origStroke(...args);
+    if (ctx.__currentElement) {
+      const val = _dash.length ? _dash.join(',') : 'none';
+      ctx.__currentElement.setAttribute('stroke-dasharray', val);
+    }
+  };
+
+  // canvas2svg's __parseFont regex only allows [-,"a-z\s] in the family name,
+  // so single-quoted names like 'Crimson Pro' crash it. Strip the quotes.
+  let _font = ctx.font ?? '10px sans-serif';
+  Object.defineProperty(ctx, 'font', {
+    get() { return _font; },
+    set(v) { _font = typeof v === 'string' ? v.replace(/'/g, '') : v; },
+    configurable: true,
+  });
+}
+
+function exportSVG() {
+  const { W, H } = canvas;
+  const svgCtx = new C2S(W, H);
+  patchC2S(svgCtx);
+  const realCtx = canvas.ctx;
+  canvas.ctx = svgCtx;
+  draw();
+  canvas.ctx = realCtx;
+
+  // Inject Google Fonts inside a CDATA block so the URL's & characters are
+  // not treated as XML entities, and the typefaces render in standalone SVG.
+  const fontStyle = `<style><![CDATA[@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap');]]></style>`;
+  let svg = svgCtx.getSerializedSvg(true);
+  svg = svg.includes('<defs>')
+    ? svg.replace('<defs>', `<defs>${fontStyle}`)
+    : svg.replace(/(<svg[^>]*>)/, `$1<defs>${fontStyle}</defs>`);
+
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.download = `wheel-${currentData.name.replace(/[^a-z0-9]/gi, '_')}.svg`;
+  a.href = url;
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -254,7 +302,7 @@ function init() {
   // Wire up buttons/inputs that use onclick in HTML via module-scope exposure
   window.fetchCity   = fetchCity;
   window.loadPreset  = loadPreset;
-  window.exportPNG   = exportPNG;
+  window.exportSVG   = exportSVG;
   window.toggleDisplay = toggleDisplay;
 
   document.getElementById('cityInput').addEventListener('keydown', e => { if (e.key === 'Enter') fetchCity(); });

@@ -259,6 +259,50 @@ export function getHolidays(year) {
   return holidays.map(h => ({ ...h, doy: ((h.doy % 365) + 365) % 365 }));
 }
 
+// ─── Glyph support detection ──────────────────────────────────────────────────
+
+// Render ⛤ and a plain outlined square (U+25A1 — the typical tofu shape) to an
+// offscreen canvas and compare pixels. If they're identical the system has no
+// font that covers U+26E4, so we fall back to the drawn path.
+function glyphOk(char) {
+  const size = 24;
+  const oc = document.createElement('canvas');
+  oc.width = size * 2; oc.height = size;
+  const ctx = oc.getContext('2d');
+  ctx.font = `${size}px serif`;
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#000';
+  ctx.fillText(char, 0,    0);
+  ctx.fillText('□',  size, 0); // WHITE SQUARE — matches typical tofu-box outline
+  const a = ctx.getImageData(0,    0, size, size).data;
+  const b = ctx.getImageData(size, 0, size, size).data;
+  return !Array.from(a).every((v, i) => v === b[i]);
+}
+
+let _pentagramGlyphOk = null;
+function pentagramGlyphOk() {
+  if (_pentagramGlyphOk === null) _pentagramGlyphOk = glyphOk('⛤');
+  return _pentagramGlyphOk;
+}
+
+let _crescentGlyphOk = null;
+function crescentGlyphOk() {
+  if (_crescentGlyphOk === null) _crescentGlyphOk = glyphOk('☪');
+  return _crescentGlyphOk;
+}
+
+let _crossGlyphOk = null;
+function crossGlyphOk() {
+  if (_crossGlyphOk === null) _crossGlyphOk = glyphOk('✝');
+  return _crossGlyphOk;
+}
+
+let _mogenDavidGlyphOk = null;
+function mogenDavidGlyphOk() {
+  if (_mogenDavidGlyphOk === null) _mogenDavidGlyphOk = glyphOk('✡');
+  return _mogenDavidGlyphOk;
+}
+
 // ─── Rendering ────────────────────────────────────────────────────────────────
 
 export const TRAD_COLORS = {
@@ -280,54 +324,89 @@ function drawSymbol(ctx, trad, x, y, r) {
   ctx.lineJoin    = 'round';
 
   if (trad === 'christian') {
-    // Latin cross
-    ctx.beginPath();
-    ctx.moveTo(x,           y - r);
-    ctx.lineTo(x,           y + r);
-    ctx.moveTo(x - r * 0.6, y - r * 0.15);
-    ctx.lineTo(x + r * 0.6, y - r * 0.15);
-    ctx.stroke();
+    if (crossGlyphOk()) {
+      // U+271D LATIN CROSS glyph
+      ctx.fillStyle = TRAD_COLORS[trad];
+      ctx.font = `${r * 2.4}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✝', x, y);
+    } else {
+      // Drawn fallback: Latin cross
+      ctx.beginPath();
+      ctx.moveTo(x,           y - r);
+      ctx.lineTo(x,           y + r);
+      ctx.moveTo(x - r * 0.6, y - r * 0.15);
+      ctx.lineTo(x + r * 0.6, y - r * 0.15);
+      ctx.stroke();
+    }
 
   } else if (trad === 'jewish') {
-    // Star of David — two interlocking equilateral triangles
-    for (let pass = 0; pass < 2; pass++) {
-      ctx.beginPath();
-      for (let i = 0; i < 3; i++) {
-        const a  = (pass === 0 ? -Math.PI / 2 : Math.PI / 2) + i * (2 * Math.PI / 3);
-        const px = x + r * Math.cos(a);
-        const py = y + r * Math.sin(a);
-        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    if (mogenDavidGlyphOk()) {
+      // U+2721 STAR OF DAVID glyph
+      ctx.fillStyle = TRAD_COLORS[trad];
+      ctx.font = `${r * 2.4}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✡', x, y);
+    } else {
+      // Drawn fallback: two interlocking equilateral triangles
+      for (let pass = 0; pass < 2; pass++) {
+        ctx.beginPath();
+        for (let i = 0; i < 3; i++) {
+          const a  = (pass === 0 ? -Math.PI / 2 : Math.PI / 2) + i * (2 * Math.PI / 3);
+          const px = x + r * Math.cos(a);
+          const py = y + r * Math.sin(a);
+          i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
       }
-      ctx.closePath();
-      ctx.stroke();
     }
 
   } else if (trad === 'wicca') {
-    // Pentagram — connect every second vertex of a regular pentagon
-    ctx.beginPath();
-    for (let i = 0; i < 5; i++) {
-      const a  = -Math.PI / 2 + i * (4 * Math.PI / 5); // step = 144°
-      const px = x + r * Math.cos(a);
-      const py = y + r * Math.sin(a);
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.stroke();
-
-  } else if (trad === 'islamic') {
-    // Rub el Hizb — two interlocking squares rotated 45° apart
-    // (the 8-pointed star ubiquitous in Islamic geometric art, analogous to
-    // the Star of David's two interlocking triangles)
-    for (let pass = 0; pass < 2; pass++) {
+    if (pentagramGlyphOk()) {
+      // U+26E4 PENTAGRAM glyph — outlined star with internal crossing lines
+      ctx.fillStyle = TRAD_COLORS[trad];
+      ctx.font = `${r * 2.4}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⛤', x, y);
+    } else {
+      // Drawn fallback: thin-stroke pentagram so the internal crossing lines show
+      ctx.lineWidth = Math.max(0.5, r * 0.18);
       ctx.beginPath();
-      for (let i = 0; i < 4; i++) {
-        const a  = pass * (Math.PI / 4) + i * (Math.PI / 2);
+      for (let i = 0; i < 5; i++) {
+        const a  = -Math.PI / 2 + i * (4 * Math.PI / 5); // 144° step = pentagram
         const px = x + r * Math.cos(a);
         const py = y + r * Math.sin(a);
         i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.stroke();
+    }
+
+  } else if (trad === 'islamic') {
+    if (crescentGlyphOk()) {
+      // U+262A STAR AND CRESCENT glyph
+      ctx.fillStyle = TRAD_COLORS[trad];
+      ctx.font = `${r * 2.4}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('☪', x, y);
+    } else {
+      // Drawn fallback: Rub el Hizb — two interlocking squares rotated 45° apart
+      for (let pass = 0; pass < 2; pass++) {
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) {
+          const a  = pass * (Math.PI / 4) + i * (Math.PI / 2);
+          const px = x + r * Math.cos(a);
+          const py = y + r * Math.sin(a);
+          i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
     }
   }
 
@@ -342,35 +421,74 @@ export function drawHolidays() {
   const { ctx, W, CX, CY } = canvas;
   const year = new Date().getFullYear();
 
-  // Placement just outside the month-label ring
-  const R_MARK  = W * 0.474; // centre of symbol
-  const R_LABEL = W * 0.493; // centre of rotated text
-  const SYM_R   = W * 0.0058; // symbol bounding radius
+  const R_MARK    = W * 0.465; // centre of symbol
+  const R_LABEL   = W * 0.481; // default centre of rotated text
+  const SYM_R     = W * 0.0055;
+  const FONT_SIZE = W * 0.012;
+  // Step must exceed the radial-overlap threshold (FONT_SIZE + 2) so that
+  // labels placed one step apart are guaranteed to clear each other radially.
+  const STEP      = FONT_SIZE + 3;
+  // Floor: label centre must clear the outer edge of the symbol marker plus
+  // half the label height and a small gap, so shifted labels never cover markers.
+  const MIN_R     = R_MARK + SYM_R + FONT_SIZE / 2 + 2;
+  // Prefer outward shifts; filter any candidate that would fall below the floor.
+  const CANDIDATES = [0, +1, +2, +3].map(n => R_LABEL + n * STEP).filter(r => r >= MIN_R);
 
   ctx.save();
 
-  getHolidays(year).forEach(({ doy, label, trad }) => {
-    if (!displayState[TRAD_STATE_KEY[trad]]) return;
-    const a = doy2angle(doy + 0.5);
-    const [sx, sy] = polar(CX, CY, a, R_MARK);
+  // Filter to visible holidays and attach pre-computed angles + text widths.
+  ctx.font = `${FONT_SIZE}px 'Crimson Pro',serif`;
+  const items = getHolidays(year)
+    .filter(h => displayState[TRAD_STATE_KEY[h.trad]])
+    .map(h => {
+      const text = h.label.replace('\n', ' ');
+      return { ...h, a: doy2angle(h.doy + 0.5), text, textW: ctx.measureText(text).width, labelR: R_LABEL };
+    });
 
-    // Symbol
+  // Sort by angle so the greedy pass processes labels in wheel order.
+  items.sort((a, b) => a.a - b.a);
+
+  // Two labels collide when they overlap both tangentially (arc-length) and radially.
+  function collides(a, b) {
+    let dAngle = Math.abs(a.a - b.a);
+    if (dAngle > Math.PI) dAngle = 2 * Math.PI - dAngle;
+    return dAngle * Math.min(a.labelR, b.labelR) < (a.textW + b.textW) / 2 + 2
+        && Math.abs(a.labelR - b.labelR) < FONT_SIZE + 2;
+  }
+
+  // Greedy: for each label try each candidate radius until one is collision-free.
+  const placed = [];
+  for (const item of items) {
+    for (const r of CANDIDATES) {
+      if (!placed.some(p => collides({ ...item, labelR: r }, p))) {
+        item.labelR = r;
+        break;
+      }
+    }
+    placed.push(item);
+  }
+
+  // Draw symbols first (no label radius needed).
+  for (const h of items) {
+    const [sx, sy] = polar(CX, CY, h.a, R_MARK);
     ctx.globalAlpha = 0.82;
-    drawSymbol(ctx, trad, sx, sy, SYM_R);
+    drawSymbol(ctx, h.trad, sx, sy, SYM_R);
+  }
 
-    // Radial label (rotated tangentially, reading outward)
-    const [lx, ly] = polar(CX, CY, a, R_LABEL);
+  // Draw labels at their resolved radii.
+  for (const h of items) {
+    const [lx, ly] = polar(CX, CY, h.a, h.labelR);
     ctx.save();
-    ctx.globalAlpha    = 0.72;
-    ctx.fillStyle      = TRAD_COLORS[trad];
-    ctx.font           = `${W * 0.012}px 'Crimson Pro',serif`;
-    ctx.textAlign      = 'center';
-    ctx.textBaseline   = 'middle';
+    ctx.globalAlpha  = 0.72;
+    ctx.fillStyle    = TRAD_COLORS[h.trad];
+    ctx.font         = `${FONT_SIZE}px 'Crimson Pro',serif`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
     ctx.translate(lx, ly);
-    ctx.rotate(a + Math.PI / 2);
-    ctx.fillText(label, 0, 0);
+    ctx.rotate(h.a + Math.PI / 2);
+    ctx.fillText(h.text, 0, 0);
     ctx.restore();
-  });
+  }
 
   ctx.restore();
 }

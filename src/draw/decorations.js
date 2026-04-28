@@ -27,7 +27,7 @@ const { newMoons: MOON_NEW, fullMoons: MOON_FULL } = computeMoonPhases(new Date(
 
 export function drawMoon() {
   const { ctx, W, CX, CY } = canvas;
-  const r = W * .430, dr = W * .009;
+  const r = W * .424, dr = W * .009;
   ctx.save();
   // +0.5 centers each marker on the middle of its day's arc, matching the
   // convention used by min/max, today-dot, and actuals overlays.
@@ -48,7 +48,7 @@ export function drawMoon() {
 
 export function drawTicks() {
   const { ctx, W, CX, CY } = canvas;
-  const tr = W * .444, lr = W * .463;
+  const tr = W * .440, lr = W * .456;
   ctx.save();
   ctx.strokeStyle = '#b0a090'; ctx.lineWidth = 1; ctx.globalAlpha = .55;
   let doy = 0;
@@ -95,7 +95,7 @@ export function drawAxes() {
   ctx.save();
   ctx.font = `italic ${W * .019}px 'Crimson Pro',serif`;
   ctx.fillStyle = '#2c2416'; ctx.globalAlpha = .48; ctx.textAlign = 'center';
-  const ld = W * .455;
+  const ld = W * .447;
   [
     { doy: SUMMER, t: 'Summer\nSolstice' },
     { doy: WINTER, t: 'Winter\nSolstice' },
