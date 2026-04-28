@@ -47,9 +47,9 @@ function draw() {
 
   // Outer decorative circles
   ctx.save();
-  ctx.beginPath(); ctx.arc(CX, CY, W * .420, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(CX, CY, W * .365, 0, Math.PI * 2);
   ctx.strokeStyle = '#b0a090'; ctx.lineWidth = 1; ctx.globalAlpha = .3; ctx.stroke();
-  ctx.beginPath(); ctx.arc(CX, CY, W * .437, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(CX, CY, W * .382, 0, Math.PI * 2);
   ctx.lineWidth = .5; ctx.globalAlpha = .18; ctx.stroke();
   ctx.restore();
 

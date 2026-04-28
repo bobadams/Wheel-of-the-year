@@ -421,8 +421,8 @@ export function drawHolidays() {
   const { ctx, W, CX, CY } = canvas;
   const year = new Date().getFullYear();
 
-  const R_MARK    = W * 0.465; // centre of symbol
-  const R_LABEL   = W * 0.481; // default centre of rotated text
+  const R_MARK    = W * 0.412; // centre of symbol
+  const R_LABEL   = W * 0.427; // default centre of rotated text
   const SYM_R     = W * 0.0055;
   const FONT_SIZE = W * 0.012;
   // Step must exceed the radial-overlap threshold (FONT_SIZE + 2) so that
@@ -432,7 +432,7 @@ export function drawHolidays() {
   // half the label height and a small gap, so shifted labels never cover markers.
   const MIN_R     = R_MARK + SYM_R + FONT_SIZE / 2 + 2;
   // Prefer outward shifts; filter any candidate that would fall below the floor.
-  const CANDIDATES = [0, +1, +2, +3].map(n => R_LABEL + n * STEP).filter(r => r >= MIN_R);
+  const CANDIDATES = [0, +1, +2].map(n => R_LABEL + n * STEP).filter(r => r >= MIN_R);
 
   ctx.save();
 

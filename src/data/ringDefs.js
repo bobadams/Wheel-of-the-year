@@ -12,7 +12,7 @@ export const RING_DEFS = [
 
 export const RING_GAP   = 0.010;
 export const RING_START = 0.147;
-export const RING_END   = 0.415;
+export const RING_END   = 0.360;
 
 export const RING_LABELS = {
   temp:     { fmt: v => `${Math.round(v)}°F`,      maxWord: 'hottest',  minWord: 'coldest'  },
