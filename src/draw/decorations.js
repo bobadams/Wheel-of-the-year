@@ -1,4 +1,4 @@
-import { canvas, currentData, actuals, todayDOY } from '../state.js';
+import { canvas, currentData } from '../state.js';
 import { doy2angle, polar } from './canvas.js';
 
 export const DIM     = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -92,44 +92,54 @@ export function drawAxes() {
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
   });
   ctx.setLineDash([]); ctx.restore();
+  // All four labels inside the circle, shifted off the axis line
   ctx.save();
-  ctx.font = `italic ${W * .019}px 'Crimson Pro',serif`;
-  ctx.fillStyle = '#2c2416'; ctx.globalAlpha = .48; ctx.textAlign = 'center';
-  const ld = W * .474;
+  ctx.font = `italic ${W * .016}px 'Crimson Pro',serif`;
+  ctx.fillStyle = '#2c2416'; ctx.globalAlpha = .48;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const insideR    = W * .090;
+  const perpOffset = W * .013;
   [
-    { doy: SUMMER, t: 'Summer\nSolstice' },
-    { doy: WINTER, t: 'Winter\nSolstice' },
-    { doy: SPRING, t: 'Spring\nEquinox'  },
-    { doy: AUTUMN, t: 'Autumn\nEquinox'  },
+    { doy: WINTER, t: 'Winter Solstice' },
+    { doy: SUMMER, t: 'Summer Solstice' },
+    { doy: SPRING, t: 'Spring Equinox'  },
+    { doy: AUTUMN, t: 'Autumn Equinox'  },
   ].forEach(({ doy, t }) => {
-    const [lx, ly] = polar(CX, CY, doy2angle(doy), ld);
-    t.split('\n').forEach((line, li, arr) =>
-      ctx.fillText(line, lx, ly + (li - (arr.length - 1) / 2) * W * .021));
+    const a = doy2angle(doy);
+    const [ax, ay] = polar(CX, CY, a, insideR);
+    // Shift label perpendicular to the axis line
+    const lx = ax + Math.cos(a + Math.PI / 2) * perpOffset;
+    const ly = ay + Math.sin(a + Math.PI / 2) * perpOffset;
+    // Normalize raw angle to [-π, π] then to [-π/2, π/2] so text is never upside-down
+    let textAngle = a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
+    if (textAngle >= Math.PI / 2)  textAngle -= Math.PI;
+    if (textAngle <  -Math.PI / 2) textAngle += Math.PI;
+    ctx.save();
+    ctx.translate(lx, ly);
+    ctx.rotate(textAngle);
+    ctx.fillText(t, 0, 0);
+    ctx.restore();
   });
   ctx.restore();
 }
 
 export function drawCenter() {
   const { ctx, W, CX, CY } = canvas;
+  // Title strip sits above the wheel; its height is the difference between
+  // the total canvas height and the square wheel area.
+  const titleH = canvas.H - W;
+  const ty = titleH / 2; // vertical centre of the title strip
+  const parts = currentData.name.split(', ');
   ctx.save();
   ctx.textAlign = 'center'; ctx.fillStyle = '#2c2416';
-  const parts = currentData.name.split(', ');
-  ctx.font = `600 ${W * .026}px Cinzel,serif`; ctx.globalAlpha = .82;
-  ctx.fillText(parts[0], CX, CY - W * .027);
-  if (parts[1]) {
-    ctx.font = `italic ${W * .020}px 'Crimson Pro',serif`; ctx.globalAlpha = .50;
-    ctx.fillText(parts[1], CX, CY + W * .016);
-  }
-  if (currentData.eviSource) {
-    ctx.font = `italic ${W * .014}px 'Crimson Pro',serif`; ctx.globalAlpha = .35;
-    ctx.fillText('EVI: ' + currentData.eviSource, CX, CY + W * .044);
-  }
-  if (actuals) {
-    const tLen = actuals.temp?.length ?? 0;
-    const rLen = actuals.rain?.length ?? 0;
-    ctx.font = `italic ${W * .013}px 'Crimson Pro',serif`; ctx.globalAlpha = .50;
-    ctx.fillStyle = '#27ae60';
-    ctx.fillText(`actuals: ${tLen}d temp · ${rLen}d rain · today=DOY${todayDOY}`, CX, CY + W * .062);
+  if (parts.length > 1) {
+    ctx.font = `600 ${W * .036}px Cinzel,serif`; ctx.globalAlpha = .85;
+    ctx.fillText(parts[0], CX, ty - W * .020);
+    ctx.font = `italic ${W * .026}px 'Crimson Pro',serif`; ctx.globalAlpha = .55;
+    ctx.fillText(parts.slice(1).join(', '), CX, ty + W * .022);
+  } else {
+    ctx.font = `600 ${W * .036}px Cinzel,serif`; ctx.globalAlpha = .85;
+    ctx.fillText(currentData.name, CX, ty);
   }
   ctx.restore();
 }

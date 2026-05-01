@@ -361,8 +361,13 @@ function exportSVG() {
 // ─── Init ────────────────────────────────────────────────────────────────────
 function resizeCanvas() {
   const sz = Math.min(660, window.innerWidth * .92);
-  canvas.el.width = sz; canvas.el.height = sz;
-  canvas.W = sz; canvas.H = sz; canvas.CX = sz / 2; canvas.CY = sz / 2;
+  const titleH = Math.round(sz * 0.10);
+  canvas.el.width  = sz;
+  canvas.el.height = sz + titleH;
+  canvas.W  = sz;
+  canvas.H  = sz + titleH;
+  canvas.CX = sz / 2;
+  canvas.CY = titleH + sz / 2;
 }
 
 function init() {
