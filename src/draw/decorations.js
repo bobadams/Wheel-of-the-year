@@ -130,16 +130,19 @@ export function drawCenter() {
   const titleH = canvas.H - W;
   const ty = titleH / 2; // vertical centre of the title strip
   const parts = currentData.name.split(', ');
+  // Position baselines so the visible text block has equal space above and below.
+  // Cinzel cap-height ≈ 0.70 × size; Crimson Pro descent ≈ 0.20 × size.
+  // Solving for equal margins gives y1 = titleH × 0.40, y2 = titleH × 0.80.
   ctx.save();
   ctx.textAlign = 'center'; ctx.fillStyle = '#2c2416';
   if (parts.length > 1) {
     ctx.font = `600 ${W * .036}px Cinzel,serif`; ctx.globalAlpha = .85;
-    ctx.fillText(parts[0], CX, ty - W * .020);
+    ctx.fillText(parts[0], CX, W * .060);
     ctx.font = `italic ${W * .026}px 'Crimson Pro',serif`; ctx.globalAlpha = .55;
-    ctx.fillText(parts.slice(1).join(', '), CX, ty + W * .022);
+    ctx.fillText(parts.slice(1).join(', '), CX, W * .100);
   } else {
     ctx.font = `600 ${W * .036}px Cinzel,serif`; ctx.globalAlpha = .85;
-    ctx.fillText(currentData.name, CX, ty);
+    ctx.fillText(currentData.name, CX, W * .080);
   }
   ctx.restore();
 }
