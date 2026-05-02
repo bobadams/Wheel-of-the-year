@@ -26,6 +26,7 @@ import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
 import { setupTooltip } from './ui/tooltip.js';
 import { showRingChart } from './ui/ringChart.js';
+import { saveActualsCache, loadActualsCache } from './data/actualsCache.js';
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
 function draw() {
@@ -89,6 +90,14 @@ async function fetchCity() {
     refreshPresets();
     refreshSourceBadges();
     draw();
+
+    // Restore cached actuals immediately so the overlay shows while fresh data loads
+    const cached = loadActualsCache(shortName);
+    if (cached) {
+      setTodayDOY(cached.todayDOY);
+      setActuals(cached.data);
+      draw();
+    }
 
     setStatus('loading', `Found ${shortName} — fetching climate normals…`);
     const climate = aggregateClimate(await fetchClimateAPI(geo.lat, geo.lon), geo.lat);
@@ -193,6 +202,9 @@ async function fetchCity() {
       const recentVis = await fetchActualsVisibility(geo.lat, geo.lon);
       if (recentVis?.length) { actuals.visibility = recentVis; draw(); }
     } catch { /* visibility actuals optional */ }
+
+    // Persist actuals so the next page load can show them immediately
+    if (actuals) saveActualsCache(shortName, actuals, todayDOY);
 
     setStatus('ok', `${shortName} — all data loaded.`);
   } catch (e) {
