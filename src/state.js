@@ -45,4 +45,6 @@ export function setActuals(a) { actuals = a; }
 export function setTodayDOY(d) { todayDOY = d; }
 
 // Canvas dimensions (set during init, updated on resize)
-export const canvas = { el: null, ctx: null, W: 0, H: 0, CX: 0, CY: 0 };
+// svgExport: true while exportSVG() is running — draw code uses this to skip
+// Unicode-glyph paths and always emit drawn SVG paths instead.
+export const canvas = { el: null, ctx: null, W: 0, H: 0, CX: 0, CY: 0, svgExport: false };

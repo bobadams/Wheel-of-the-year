@@ -323,16 +323,18 @@ function drawSymbol(ctx, trad, x, y, r) {
   ctx.lineCap     = 'round';
   ctx.lineJoin    = 'round';
 
+  // During SVG export, always use drawn paths — Unicode glyphs become <text>
+  // elements that depend on the viewer having the right serif font coverage.
+  const useGlyphs = !canvas.svgExport;
+
   if (trad === 'christian') {
-    if (crossGlyphOk()) {
-      // U+271D LATIN CROSS glyph
+    if (useGlyphs && crossGlyphOk()) {
       ctx.fillStyle = TRAD_COLORS[trad];
       ctx.font = `${r * 2.4}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('✝', x, y);
     } else {
-      // Drawn fallback: Latin cross
       ctx.beginPath();
       ctx.moveTo(x,           y - r);
       ctx.lineTo(x,           y + r);
@@ -342,15 +344,13 @@ function drawSymbol(ctx, trad, x, y, r) {
     }
 
   } else if (trad === 'jewish') {
-    if (mogenDavidGlyphOk()) {
-      // U+2721 STAR OF DAVID glyph
+    if (useGlyphs && mogenDavidGlyphOk()) {
       ctx.fillStyle = TRAD_COLORS[trad];
       ctx.font = `${r * 2.4}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('✡', x, y);
     } else {
-      // Drawn fallback: two interlocking equilateral triangles
       for (let pass = 0; pass < 2; pass++) {
         ctx.beginPath();
         for (let i = 0; i < 3; i++) {
@@ -365,19 +365,17 @@ function drawSymbol(ctx, trad, x, y, r) {
     }
 
   } else if (trad === 'wicca') {
-    if (pentagramGlyphOk()) {
-      // U+26E4 PENTAGRAM glyph — outlined star with internal crossing lines
+    if (useGlyphs && pentagramGlyphOk()) {
       ctx.fillStyle = TRAD_COLORS[trad];
       ctx.font = `${r * 2.4}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('⛤', x, y);
     } else {
-      // Drawn fallback: thin-stroke pentagram so the internal crossing lines show
       ctx.lineWidth = Math.max(0.5, r * 0.18);
       ctx.beginPath();
       for (let i = 0; i < 5; i++) {
-        const a  = -Math.PI / 2 + i * (4 * Math.PI / 5); // 144° step = pentagram
+        const a  = -Math.PI / 2 + i * (4 * Math.PI / 5);
         const px = x + r * Math.cos(a);
         const py = y + r * Math.sin(a);
         i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
@@ -387,15 +385,13 @@ function drawSymbol(ctx, trad, x, y, r) {
     }
 
   } else if (trad === 'islamic') {
-    if (crescentGlyphOk()) {
-      // U+262A STAR AND CRESCENT glyph
+    if (useGlyphs && crescentGlyphOk()) {
       ctx.fillStyle = TRAD_COLORS[trad];
       ctx.font = `${r * 2.4}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('☪', x, y);
     } else {
-      // Drawn fallback: Rub el Hizb — two interlocking squares rotated 45° apart
       for (let pass = 0; pass < 2; pass++) {
         ctx.beginPath();
         for (let i = 0; i < 4; i++) {

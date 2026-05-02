@@ -344,30 +344,75 @@ function patchC2S(ctx) {
   });
 }
 
-function exportSVG() {
-  const { W, H } = canvas;
-  const svgCtx = new C2S(W, H);
-  patchC2S(svgCtx);
-  const realCtx = canvas.ctx;
-  canvas.ctx = svgCtx;
-  draw();
-  canvas.ctx = realCtx;
+// Fetch Google Fonts CSS then inline each font file as a base64 data URI so
+// the exported SVG is fully self-contained and renders correctly without a
+// network connection or browser-specific CSS @import support.
+async function buildEmbeddedFontStyle() {
+  const GOOGLE_URL = 'https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap';
+  const FALLBACK   = `<style><![CDATA[@import url('${GOOGLE_URL}');]]></style>`;
+  try {
+    const css = await fetch(GOOGLE_URL).then(r => r.text());
+    const urls = [...css.matchAll(/url\(([^)]+)\)/g)]
+      .map(m => m[1].replace(/['"]/g, ''))
+      .filter(u => u.startsWith('http'));
 
-  // Inject Google Fonts inside a CDATA block so the URL's & characters are
-  // not treated as XML entities, and the typefaces render in standalone SVG.
-  const fontStyle = `<style><![CDATA[@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap');]]></style>`;
-  let svg = svgCtx.getSerializedSvg(true);
-  svg = svg.includes('<defs>')
-    ? svg.replace('<defs>', `<defs>${fontStyle}`)
-    : svg.replace(/(<svg[^>]*>)/, `$1<defs>${fontStyle}</defs>`);
+    // Fetch all font files in parallel, convert to base64 data URIs.
+    const replacements = await Promise.all(urls.map(async url => {
+      const buf   = await fetch(url).then(r => r.arrayBuffer());
+      const bytes = new Uint8Array(buf);
+      let binary  = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      const b64  = btoa(binary);
+      const mime = url.includes('.woff2') ? 'font/woff2' : 'font/woff';
+      return { url, dataUri: `data:${mime};base64,${b64}` };
+    }));
 
-  const blob = new Blob([svg], { type: 'image/svg+xml' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.download = `wheel-${currentData.name.replace(/[^a-z0-9]/gi, '_')}.svg`;
-  a.href = url;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+    let inlined = css;
+    for (const { url, dataUri } of replacements) {
+      inlined = inlined.replaceAll(url, dataUri);
+    }
+    return `<style>${inlined}</style>`;
+  } catch {
+    return FALLBACK;
+  }
+}
+
+async function exportSVG() {
+  setLoading(true);
+  setStatus('loading', 'Embedding fonts…');
+  try {
+    const fontStyle = await buildEmbeddedFontStyle();
+
+    const { W, H } = canvas;
+    const svgCtx   = new C2S(W, H);
+    patchC2S(svgCtx);
+    const realCtx      = canvas.ctx;
+    canvas.ctx         = svgCtx;
+    canvas.svgExport   = true;
+    draw();
+    canvas.svgExport   = false;
+    canvas.ctx         = realCtx;
+
+    let svg = svgCtx.getSerializedSvg(true);
+    svg = svg.includes('<defs>')
+      ? svg.replace('<defs>', `<defs>${fontStyle}`)
+      : svg.replace(/(<svg[^>]*>)/, `$1<defs>${fontStyle}</defs>`);
+
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.download = `wheel-${currentData.name.replace(/[^a-z0-9]/gi, '_')}.svg`;
+    a.href = url;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus('ok', '');
+  } finally {
+    canvas.svgExport = false;
+    setLoading(false);
+  }
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────
