@@ -27,7 +27,10 @@ const { newMoons: MOON_NEW, fullMoons: MOON_FULL } = computeMoonPhases(new Date(
 
 export function drawMoon() {
   const { ctx, W, CX, CY } = canvas;
-  const r = W * .369, dr = W * .009;
+  // Center and radius matched to the decorative ring band (.365–.382)
+  const RING_INNER = W * .365, RING_OUTER = W * .382;
+  const r  = (RING_INNER + RING_OUTER) / 2;
+  const dr = (RING_OUTER - RING_INNER) / 2;
   ctx.save();
   // +0.5 centers each marker on the middle of its day's arc, matching the
   // convention used by min/max, today-dot, and actuals overlays.
@@ -48,14 +51,16 @@ export function drawMoon() {
 
 export function drawTicks() {
   const { ctx, W, CX, CY } = canvas;
-  const tr = W * .388, lr = W * .403;
+  // Tick endpoints aligned to the decorative ring band (.365–.382)
+  const RING_INNER = W * .365, RING_OUTER = W * .382;
+  const lr = W * .403;
   ctx.save();
   ctx.strokeStyle = '#b0a090'; ctx.lineWidth = 1; ctx.globalAlpha = .55;
   let doy = 0;
   MON_S.forEach((m, i) => {
     const a = doy2angle(doy);
-    const [x1, y1] = polar(CX, CY, a, tr - W * .012);
-    const [x2, y2] = polar(CX, CY, a, tr);
+    const [x1, y1] = polar(CX, CY, a, RING_INNER);
+    const [x2, y2] = polar(CX, CY, a, RING_OUTER);
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     const ma = doy2angle(doy + DIM[i] / 2);
     const [lx, ly] = polar(CX, CY, ma, lr);
