@@ -144,7 +144,7 @@ export function drawCenter() {
     ctx.font = `600 ${W * .036}px Cinzel,serif`; ctx.globalAlpha = .85;
     ctx.fillText(parts[0], CX, W * .060);
     ctx.font = `italic ${W * .026}px 'Crimson Pro',serif`; ctx.globalAlpha = .55;
-    ctx.fillText(parts.slice(1).join(', '), CX, W * .100);
+    ctx.fillText(parts.slice(1).join(', '), CX, W * .086);
   } else {
     ctx.font = `600 ${W * .036}px Cinzel,serif`; ctx.globalAlpha = .85;
     ctx.fillText(currentData.name, CX, W * .080);
