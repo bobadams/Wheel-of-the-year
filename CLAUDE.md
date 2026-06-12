@@ -258,7 +258,16 @@ button (forces regeneration, bypassing the cache).
 - **launchd:** `server/com.wheel.image-server.plist` → `~/Library/LaunchAgents/`
   (RunAtLoad + KeepAlive); logs to `~/Library/Logs/wheel-image-server.log`
 - **nginx:** a `/wheel-images/` location proxies to `http://127.0.0.1:7871/`
-  with `proxy_read_timeout 300s` (generation can take ~minutes on MPS).
+  with `proxy_read_timeout 600s` (a cold Forge boot + render can take minutes).
+
+### On-demand Forge launch
+Forge is **not** kept running — the image service launches it lazily. On a cache
+miss, `ensureForge()` checks `GET /sdapi/v1/sd-models`; if Forge is down it spawns
+`webui.sh` (detached, logs to `~/forge-run.log`), polls until the API responds
+(up to `FORGE_BOOT_TIMEOUT`, default 360s), then renders. Concurrent requests
+share a single boot. Env overrides: `FORGE_DIR`, `FORGE_LAUNCH`, `FORGE_BOOT_TIMEOUT`.
+The first new-city request after idle therefore waits ~1–3 min for Forge to boot
++ load the model; cache hits and subsequent generations are fast.
 
 Local dev: set `VITE_IMAGE_URL=http://macmini.local:7871` in `.env.local` to hit
 the service directly (it sends permissive CORS headers); otherwise the

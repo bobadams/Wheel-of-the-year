@@ -16,14 +16,23 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
+const HOME        = process.env.HOME ?? '/Users/bradfordadams';
 const PORT        = Number(process.env.PORT ?? 7871);
 const CACHE_DIR   = process.env.IMAGE_CACHE_DIR ?? path.join(__dirname, 'image-cache');
 const OLLAMA_URL  = process.env.OLLAMA_URL  ?? 'http://127.0.0.1:11434';
 const FORGE_URL   = process.env.FORGE_URL   ?? 'http://127.0.0.1:7860';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'llama3.2:3b';
+
+// On-demand Forge launch. Forge is left off when idle; the first generation
+// after idle boots it and waits for the model to load.
+const FORGE_DIR          = process.env.FORGE_DIR ?? `${HOME}/stable-diffusion-webui-forge`;
+const FORGE_BOOT_TIMEOUT = Number(process.env.FORGE_BOOT_TIMEOUT ?? 360000); // ms
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const NEGATIVE_PROMPT = [
   'blurry, cartoon, painting, illustration, anime, deformed',
@@ -80,6 +89,44 @@ async function composePrompt(facts) {
   ].join(', ');
 }
 
+/** Is Forge up and serving its API? */
+async function forgeReady() {
+  try {
+    const r = await fetch(`${FORGE_URL}/sdapi/v1/sd-models`, { signal: AbortSignal.timeout(4000) });
+    return r.ok;
+  } catch { return false; }
+}
+
+// Single in-flight boot, shared across concurrent requests.
+let forgeBoot = null;
+
+/** Launch Forge (detached) and poll until its API responds, or time out. */
+async function bootForge() {
+  console.log('[image-server] Forge not running — launching…');
+  const cmd = process.env.FORGE_LAUNCH
+    ?? `cd "${FORGE_DIR}" && bash webui.sh > "${HOME}/forge-run.log" 2>&1`;
+  const child = spawn('bash', ['-lc', cmd], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH ?? ''}`, PYTORCH_ENABLE_MPS_FALLBACK: '1' },
+  });
+  child.unref();
+
+  const deadline = Date.now() + FORGE_BOOT_TIMEOUT;
+  while (Date.now() < deadline) {
+    await sleep(5000);
+    if (await forgeReady()) { console.log('[image-server] Forge is ready'); return; }
+  }
+  throw new Error(`Forge did not become ready within ${Math.round(FORGE_BOOT_TIMEOUT / 1000)}s`);
+}
+
+/** Ensure Forge is up, launching it on demand if needed. */
+async function ensureForge() {
+  if (await forgeReady()) return;
+  if (!forgeBoot) forgeBoot = bootForge().finally(() => { forgeBoot = null; });
+  await forgeBoot;
+}
+
 /** Run Forge txt2img; returns a PNG Buffer. */
 async function forgeTxt2img(prompt) {
   const res = await fetch(`${FORGE_URL}/sdapi/v1/txt2img`, {
@@ -114,6 +161,7 @@ async function generate(key, facts, force) {
 
   const work = (async () => {
     const prompt = await composePrompt(facts);
+    await ensureForge();
     const png = await forgeTxt2img(prompt);
     await fs.mkdir(CACHE_DIR, { recursive: true });
     await fs.writeFile(pngPath, png);
