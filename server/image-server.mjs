@@ -46,19 +46,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const NEGATIVE_PROMPT = [
   'blurry, cartoon, painting, illustration, anime, deformed',
   'people, person, buildings, houses, roads, cars, urban, signage, text, watermark, frame, border',
-  'flat horizon, straight horizon, cropped sphere, square crop, multiple planets',
+  // The client warps this strip into a little planet, so the SOURCE must stay a
+  // FLAT panorama — push curvature/sphere artifacts out of the generation.
+  'fisheye, tiny planet, little planet, curved horizon, distorted horizon, sphere, globe, circular, vignette',
   'lowres, bad anatomy, worst quality, oversaturated',
 ].join(', ');
 
-// Strongly-weighted stereographic "little planet" framing, prepended to every
-// prompt. SD 1.5 renders this projection weakly from plain tokens, so the terms
-// are emphasised with Forge/A1111 attention weighting `(token:weight)` and piled
-// with synonyms to bias the whole composition toward a centered curved globe.
-const TINY_PLANET_PREFIX = [
-  '(tiny planet:1.5)', '(little planet:1.4)', '(stereographic projection:1.3)',
-  '360 degree spherical panorama', '(fisheye:1.2)', 'equirectangular panorama wrapped into a sphere',
-  'curved circular horizon', 'the whole landscape bent into a small round planet centered in frame',
-  'sky and clouds radiating outward around the globe', 'aerial drone view straight down',
+// The client (src/draw/centerImage.js) stereographically warps the generated
+// image into a sealed "little planet". For that warp to work the SOURCE must be
+// a FLAT equirectangular strip whose WIDTH carries the seasonal cycle, with
+// winter on BOTH ends so the wrap seam (left edge meets right edge) is invisible.
+// This prefix is prepended to every prompt; the LLM only writes the ecology body.
+const PANORAMA_PREFIX = [
+  'equirectangular 360 panorama, flat horizontal panoramic strip, perfectly level straight horizon, ultra wide aspect ratio',
+  'a continuous landscape that cycles through the seasons from left to right: deep snowy winter on the far left edge, then spring blossoms, then lush green summer in the middle, then golden autumn foliage, returning to deep snowy winter on the far right edge',
+  'the far-left and far-right edges match (both snowy winter) so the panorama wraps seamlessly',
 ].join(', ');
 
 // Dedupe concurrent requests for the same key so we never run Forge twice.
@@ -72,20 +74,20 @@ function sanitizeKey(key) {
 /** Ask the local LLM to compose a Stable Diffusion prompt from location facts. */
 async function composePrompt(facts) {
   const f = facts || {};
-  // The server prepends a fixed, strongly-weighted "tiny planet" projection
-  // prefix (TINY_PLANET_PREFIX); the LLM only writes the ecology BODY so it can
-  // concentrate on place-specific terrain, seasons, vegetation and wildlife
-  // without having to reproduce the stereographic framing itself.
+  // The server prepends a fixed panorama/seasonal-layout prefix (PANORAMA_PREFIX);
+  // the LLM only writes the ecology BODY so it can concentrate on place-specific
+  // terrain, vegetation and wildlife without having to reproduce the framing.
   const instruction = [
     'You write the descriptive body of a prompt for a text-to-image model (Stable Diffusion).',
-    'The image is a "tiny planet": the entire landscape is bent into a small round globe, so',
-    'describe what is ON that globe, not the camera projection (that is handled separately).',
-    'Produce ONE vivid, comma-separated fragment (max ~55 words) describing the natural ecology of',
-    'this specific place and its FOUR SEASONS blending around the sphere — e.g. snowy winter, spring',
-    'blossoms, lush green summer, and golden autumn foliage flowing into one another. Include',
-    'characteristic terrain, native vegetation, and one or two representative wild animals of the',
-    'region. Do NOT write the words "tiny planet", "panorama", "fisheye", or "stereographic" — those',
-    'are added for you. No people, no buildings, no text. Output ONLY the fragment, nothing else.',
+    'The image is a FLAT horizontal panorama whose width sweeps through the four seasons of one',
+    'place (snowy winter, spring, summer, autumn). The seasonal layout and flat framing are handled',
+    'separately — describe only the natural ecology that fills the scene.',
+    'Produce ONE vivid, comma-separated fragment (max ~55 words) naming the characteristic terrain,',
+    'native vegetation, and one or two representative wild animals of this region, and how the',
+    "vegetation looks in each season (bare/snowy in winter, flowering in spring, green in summer,",
+    'gold/brown in autumn). Do NOT write the words "tiny planet", "globe", "sphere", "fisheye",',
+    '"panorama", or "curved" — the framing is added for you. No people, no buildings, no text.',
+    'Output ONLY the fragment, nothing else.',
     '',
     'Location facts:',
     `- Place: ${f.name ?? 'unknown'}`,
@@ -108,20 +110,20 @@ async function composePrompt(facts) {
     if (!res.ok) throw new Error(`Ollama ${res.status}`);
     const json = await res.json();
     let body = String(json.response || '').trim().replace(/^["']|["']$/g, '');
-    // Strip any projection words the LLM slipped in so they don't dilute the
-    // weighted prefix the server controls.
-    body = body.replace(/\b(tiny planet|little planet|stereographic|fisheye|panoramas?|equirectangular)\b/gi, '')
+    // Strip any framing words the LLM slipped in so they don't fight the flat
+    // panorama we need as the warp source.
+    body = body.replace(/\b(tiny planet|little planet|stereographic|fisheye|panoramas?|equirectangular|globe|sphere|curved)\b/gi, '')
                .replace(/\s*,\s*,+/g, ', ').replace(/^[,\s]+/, '').trim();
-    if (body) return `${TINY_PLANET_PREFIX}, ${body}, photorealistic, natural light, professional nature photography, National Geographic style, sharp focus, 8k`;
+    if (body) return `${PANORAMA_PREFIX}, ${body}, photorealistic, natural light, professional nature photography, National Geographic style, sharp focus, 8k`;
   } catch (e) {
     console.warn('[image-server] Ollama prompt failed, using fallback:', e.message);
   }
   // Fallback prompt if the LLM is unavailable.
   return [
-    TINY_PLANET_PREFIX,
+    PANORAMA_PREFIX,
     `${f.biome ?? 'temperate'} landscape near ${f.name ?? 'a natural region'}`,
-    'four seasons blending around the globe — snowy winter, spring blossoms, green summer, golden autumn',
-    'native wildlife, native vegetation, golden hour',
+    'native vegetation bare and snowy in winter, flowering in spring, lush green in summer, gold in autumn',
+    'native wildlife, golden hour',
     'photorealistic, professional nature photography, National Geographic style, sharp focus, 8k',
   ].join(', ');
 }
@@ -195,8 +197,10 @@ async function forgeTxt2img(prompt) {
       prompt,
       negative_prompt: NEGATIVE_PROMPT,
       steps: 25,
-      width: 768,
-      height: 768,
+      // 2:1 equirectangular strip — the client warps it into a little planet,
+      // and its width carries the seasonal cycle (winter→spring→summer→autumn).
+      width: 1024,
+      height: 512,
       cfg_scale: 7,
       sampler_name: 'DPM++ 2M Karras',
     }),
