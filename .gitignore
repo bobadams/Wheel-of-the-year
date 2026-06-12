@@ -1,2 +1,7 @@
 dist/
 node_modules/
+image-cache/
+server/image-cache/
+.DS_Store
+.claude/settings.local.json
+.env.local

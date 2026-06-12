@@ -7,11 +7,13 @@ import {
   canvas, ringOrder, ringState, displayState,
   currentData, smoothedData, actuals,
   setCurrentData, mergeCurrentData, setActivePreset, setActuals, setTodayDOY,
+  setCenterImage,
 } from './state.js';
 import { computeRingLayouts } from './draw/layout.js';
 import { drawRing } from './draw/ring.js';
 import { computeNormBounds } from './draw/normalize.js';
 import { drawMoon, drawTicks, drawAxes, drawCenter } from './draw/decorations.js';
+import { drawCenterImage } from './draw/centerImage.js';
 import { drawHolidays } from './draw/holidays.js';
 import { drawMinMaxMarkers } from './draw/labels.js';
 import { drawWindBarbs } from './draw/windBarbs.js';
@@ -21,6 +23,7 @@ import { fetchModisEVI, eviProxyFallback } from './fetch/evi.js';
 import { fetchPm25 } from './fetch/pm25.js';
 import { fetchVisibility } from './fetch/visibility.js';
 import { fetchActuals, fetchRecentEVI, fetchActualsPm25, fetchActualsVisibility } from './fetch/actuals.js';
+import { fetchWheelImage } from './fetch/image.js';
 import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
@@ -35,6 +38,9 @@ function draw() {
   const normBounds = computeNormBounds(currentData);
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#faf7f2'; ctx.fillRect(0, 0, W, H);
+
+  // Ecology image first so it sits behind the rings and all decorations.
+  drawCenterImage(layouts);
 
   ringOrder.forEach(id => {
     const s = ringState[id];
@@ -71,6 +77,42 @@ function draw() {
   drawCenter();
 }
 
+// ─── Center ecology image ─────────────────────────────────────────────────────
+// Tracks the location an in-flight/last image request belongs to so stale
+// responses (user switched cities mid-generate) are discarded.
+let imageRequestToken = 0;
+
+function setImageStatus(text, kind = '') {
+  const el = document.getElementById('imageStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `image-status${kind ? ' ' + kind : ''}`;
+}
+
+async function loadCenterImage(force = false) {
+  if (!currentData?.name) return;
+  const token = ++imageRequestToken;
+  const btn = document.getElementById('genImageBtn');
+  if (btn) btn.disabled = true;
+  setImageStatus(force ? 'Generating new image…' : 'Loading ecology image…', 'loading');
+  try {
+    const url = await fetchWheelImage(currentData, { force });
+    const img = new Image();
+    img.onload = () => {
+      if (token !== imageRequestToken) { URL.revokeObjectURL(url); return; }
+      setCenterImage(img);
+      setImageStatus('', '');
+      draw();
+    };
+    img.onerror = () => { if (token === imageRequestToken) setImageStatus('Image failed to load.', 'error'); };
+    img.src = url;
+  } catch (e) {
+    if (token === imageRequestToken) setImageStatus(e.message, 'error');
+  } finally {
+    if (token === imageRequestToken && btn) btn.disabled = false;
+  }
+}
+
 // ─── Live fetch ──────────────────────────────────────────────────────────────
 async function fetchCity() {
   const q = document.getElementById('cityInput').value.trim();
@@ -78,6 +120,7 @@ async function fetchCity() {
   setStatus('loading', 'Geocoding…');
   setLoading(true);
   setActuals(null); setTodayDOY(null);
+  setCenterImage(null);
   setEviProgress(false);
 
   try {
@@ -154,6 +197,9 @@ async function fetchCity() {
     refreshSourceBadges();
     draw();
 
+    // Ecology image — biome now has temp/rain/EVI to classify from.
+    loadCenterImage(false);
+
     // PM2.5
     setStatus('loading', 'Fetching PM2.5 air quality normals…');
     let pm25 = null;
@@ -219,9 +265,11 @@ async function fetchCity() {
 function loadPreset(p) {
   setCurrentData(p.data);
   setActuals(null); setTodayDOY(null);
+  setCenterImage(null);
   document.getElementById('cityInput').value = p.city;
   setActivePreset(p.label);
   refreshPresets(); refreshSourceBadges(); draw();
+  loadCenterImage(false);
   setStatus('ok', `Loaded built-in data for ${p.data.name} — click Load Live Data for actuals overlay`);
 }
 
@@ -476,6 +524,7 @@ function init() {
   window.exportSVG     = exportSVG;
   window.copyLink      = copyLink;
   window.toggleDisplay = toggleDisplay;
+  window.generateCenterImage = () => loadCenterImage(true);
 
   document.getElementById('cityInput').addEventListener('keydown', e => { if (e.key === 'Enter') fetchCity(); });
   window.addEventListener('resize', () => { resizeCanvas(); draw(); });
@@ -493,6 +542,8 @@ function init() {
 
   // Restore from URL params if present; otherwise fetch actuals for the default preset
   if (applyUrlParams()) return;
+
+  loadCenterImage(false);
 
   (async () => {
     const { lat, lon } = PRESETS[0].data;

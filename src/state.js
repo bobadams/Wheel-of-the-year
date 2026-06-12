@@ -12,7 +12,7 @@ RING_DEFS.forEach(r => {
 });
 
 // Global display toggles
-export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true };
+export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true, centerImage: true };
 
 function precomputeSmoothed(data) {
   const out = {};
@@ -43,6 +43,11 @@ export let todayDOY = null;
 
 export function setActuals(a) { actuals = a; }
 export function setTodayDOY(d) { todayDOY = d; }
+
+// Center "ecology" image — a loaded HTMLImageElement (or null). Drawn masked to
+// the wheel's center hole, behind the axes/labels/decorations.
+export let centerImage = null;
+export function setCenterImage(img) { centerImage = img; }
 
 // Canvas dimensions (set during init, updated on resize)
 // svgExport: true while exportSVG() is running — draw code uses this to skip

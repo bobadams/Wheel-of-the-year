@@ -80,6 +80,10 @@ input[type=color] { width: 26px; height: 18px; border: 1px solid var(--border); 
 .status { font-size: .74rem; color: var(--ink-light); text-align: center; min-height: 1.2em; padding: .2rem 1rem; font-style: italic; }
 .status.loading { color: #2471a3; } .status.error { color: #c0392b; } .status.ok { color: #27ae60; }
 
+.image-status { font-size: .7rem; color: var(--ink-light); font-style: italic; min-height: 0; margin: 0 0 .2rem; }
+.image-status:empty { display: none; }
+.image-status.loading { color: #2471a3; } .image-status.error { color: #c0392b; }
+
 .evi-progress { display: none; flex-direction: column; gap: .2rem; padding: .2rem 1rem; max-width: 680px; width: 100%; align-items: center; }
 .evi-progress.visible { display: flex; }
 .evi-bar-wrap { width: min(92vw,500px); height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
