@@ -50,6 +50,17 @@ const NEGATIVE_PROMPT = [
   'lowres, bad anatomy, worst quality, oversaturated',
 ].join(', ');
 
+// Strongly-weighted stereographic "little planet" framing, prepended to every
+// prompt. SD 1.5 renders this projection weakly from plain tokens, so the terms
+// are emphasised with Forge/A1111 attention weighting `(token:weight)` and piled
+// with synonyms to bias the whole composition toward a centered curved globe.
+const TINY_PLANET_PREFIX = [
+  '(tiny planet:1.5)', '(little planet:1.4)', '(stereographic projection:1.3)',
+  '360 degree spherical panorama', '(fisheye:1.2)', 'equirectangular panorama wrapped into a sphere',
+  'curved circular horizon', 'the whole landscape bent into a small round planet centered in frame',
+  'sky and clouds radiating outward around the globe', 'aerial drone view straight down',
+].join(', ');
+
 // Dedupe concurrent requests for the same key so we never run Forge twice.
 const inFlight = new Map();
 
@@ -61,18 +72,20 @@ function sanitizeKey(key) {
 /** Ask the local LLM to compose a Stable Diffusion prompt from location facts. */
 async function composePrompt(facts) {
   const f = facts || {};
+  // The server prepends a fixed, strongly-weighted "tiny planet" projection
+  // prefix (TINY_PLANET_PREFIX); the LLM only writes the ecology BODY so it can
+  // concentrate on place-specific terrain, seasons, vegetation and wildlife
+  // without having to reproduce the stereographic framing itself.
   const instruction = [
-    'You write prompts for a text-to-image model (Stable Diffusion).',
-    'Produce ONE vivid, comma-separated prompt (max ~70 words) for a "tiny planet" image: a',
-    'stereographic 360-degree spherical panorama where the landscape is wrapped into a small',
-    'curved globe centered in frame, with the sky and clouds radiating outward around it.',
-    'The little planet must capture the natural ecology of a specific place and show its FOUR',
-    'SEASONS blending around the sphere — e.g. snowy winter, spring blossoms, lush green summer,',
-    'and golden autumn foliage flowing into one another. Include characteristic terrain, native',
-    'vegetation, and one or two representative wild animals of that region. No people, no buildings,',
-    'no text. End with quality keywords. Output ONLY the prompt text, nothing else.',
-    '',
-    'Always begin the prompt with: "tiny planet, little planet, stereographic 360 panorama".',
+    'You write the descriptive body of a prompt for a text-to-image model (Stable Diffusion).',
+    'The image is a "tiny planet": the entire landscape is bent into a small round globe, so',
+    'describe what is ON that globe, not the camera projection (that is handled separately).',
+    'Produce ONE vivid, comma-separated fragment (max ~55 words) describing the natural ecology of',
+    'this specific place and its FOUR SEASONS blending around the sphere — e.g. snowy winter, spring',
+    'blossoms, lush green summer, and golden autumn foliage flowing into one another. Include',
+    'characteristic terrain, native vegetation, and one or two representative wild animals of the',
+    'region. Do NOT write the words "tiny planet", "panorama", "fisheye", or "stereographic" — those',
+    'are added for you. No people, no buildings, no text. Output ONLY the fragment, nothing else.',
     '',
     'Location facts:',
     `- Place: ${f.name ?? 'unknown'}`,
@@ -94,21 +107,21 @@ async function composePrompt(facts) {
     });
     if (!res.ok) throw new Error(`Ollama ${res.status}`);
     const json = await res.json();
-    let text = String(json.response || '').trim().replace(/^["']|["']$/g, '');
-    // Guarantee the tiny-planet framing even if the LLM drops it.
-    if (text && !/tiny planet|little planet/i.test(text)) {
-      text = `tiny planet, little planet, stereographic 360 panorama, ${text}`;
-    }
-    if (text) return `${text}, photorealistic, natural light, professional nature photography, National Geographic style, sharp focus, 8k`;
+    let body = String(json.response || '').trim().replace(/^["']|["']$/g, '');
+    // Strip any projection words the LLM slipped in so they don't dilute the
+    // weighted prefix the server controls.
+    body = body.replace(/\b(tiny planet|little planet|stereographic|fisheye|panoramas?|equirectangular)\b/gi, '')
+               .replace(/\s*,\s*,+/g, ', ').replace(/^[,\s]+/, '').trim();
+    if (body) return `${TINY_PLANET_PREFIX}, ${body}, photorealistic, natural light, professional nature photography, National Geographic style, sharp focus, 8k`;
   } catch (e) {
     console.warn('[image-server] Ollama prompt failed, using fallback:', e.message);
   }
   // Fallback prompt if the LLM is unavailable.
   return [
-    'tiny planet, little planet, stereographic 360 panorama',
+    TINY_PLANET_PREFIX,
     `${f.biome ?? 'temperate'} landscape near ${f.name ?? 'a natural region'}`,
-    'four seasons blending around the sphere — snowy winter, spring blossoms, green summer, golden autumn',
-    'native wildlife, native vegetation, curved horizon, sky and clouds radiating outward, golden hour',
+    'four seasons blending around the globe — snowy winter, spring blossoms, green summer, golden autumn',
+    'native wildlife, native vegetation, golden hour',
     'photorealistic, professional nature photography, National Geographic style, sharp focus, 8k',
   ].join(', ');
 }
