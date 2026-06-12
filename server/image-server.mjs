@@ -10,13 +10,18 @@
 //     Diffusion prompt from `facts`, runs Forge txt2img, caches the PNG (and the
 //     prompt alongside it for debugging), and returns the PNG.
 //
+// Forge and Ollama are kept from co-residing in RAM (the Mac mini has 8 GB):
+// the LLM is unloaded right after composing the prompt (keep_alive: 0), and
+// Forge is launched on demand and shut down after an idle period.
+//
 // Run:  node server/image-server.mjs
-// Env:  PORT (default 7871), IMAGE_CACHE_DIR, OLLAMA_URL, FORGE_URL, OLLAMA_MODEL
+// Env:  PORT (default 7871), IMAGE_CACHE_DIR, OLLAMA_URL, FORGE_URL, OLLAMA_MODEL,
+//       FORGE_DIR, FORGE_LAUNCH, FORGE_BOOT_TIMEOUT, FORGE_IDLE_TIMEOUT
 
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
@@ -27,10 +32,14 @@ const OLLAMA_URL  = process.env.OLLAMA_URL  ?? 'http://127.0.0.1:11434';
 const FORGE_URL   = process.env.FORGE_URL   ?? 'http://127.0.0.1:7860';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'llama3.2:3b';
 
-// On-demand Forge launch. Forge is left off when idle; the first generation
-// after idle boots it and waits for the model to load.
+// On-demand Forge launch + idle teardown. The Mac mini has only 8 GB of RAM,
+// so Forge and Ollama must take turns rather than co-reside. Forge is left off
+// when idle; the first generation after idle boots it, and it is shut down once
+// no generation has run for FORGE_IDLE_TIMEOUT, handing that RAM back to Ollama
+// (which the sibling astrology site needs regularly).
 const FORGE_DIR          = process.env.FORGE_DIR ?? `${HOME}/stable-diffusion-webui-forge`;
 const FORGE_BOOT_TIMEOUT = Number(process.env.FORGE_BOOT_TIMEOUT ?? 360000); // ms
+const FORGE_IDLE_TIMEOUT = Number(process.env.FORGE_IDLE_TIMEOUT ?? 600000); // ms (10 min)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -72,7 +81,10 @@ async function composePrompt(facts) {
     const res = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: OLLAMA_MODEL, prompt: instruction, stream: false, options: { temperature: 0.7 } }),
+      // keep_alive: 0 unloads the LLM from RAM immediately after it answers, so
+      // its memory is freed before Forge loads its (much larger) model. On 8 GB
+      // the two cannot co-reside without thrashing.
+      body: JSON.stringify({ model: OLLAMA_MODEL, prompt: instruction, stream: false, keep_alive: 0, options: { temperature: 0.7 } }),
     });
     if (!res.ok) throw new Error(`Ollama ${res.status}`);
     const json = await res.json();
@@ -127,6 +139,28 @@ async function ensureForge() {
   await forgeBoot;
 }
 
+// ── Idle teardown ─────────────────────────────────────────────────────────────
+let forgeIdleTimer = null;
+
+/** Kill whatever process owns the Forge port, freeing its RAM for Ollama. */
+function shutdownForge() {
+  forgeIdleTimer = null;
+  // `lsof -ti :7860 | xargs kill -9` — resolve PID(s) on the Forge port and kill.
+  const port = new URL(FORGE_URL).port || '7860';
+  execFile('bash', ['-lc', `lsof -ti :${port} | xargs -r kill -9`], err => {
+    if (err) console.warn('[image-server] Forge shutdown failed:', err.message);
+    else console.log(`[image-server] Forge idle for ${Math.round(FORGE_IDLE_TIMEOUT / 1000)}s — shut down to free RAM`);
+  });
+}
+
+/** (Re)arm the idle timer; called after every generation finishes. */
+function scheduleForgeShutdown() {
+  if (FORGE_IDLE_TIMEOUT <= 0) return; // 0 disables auto-shutdown
+  if (forgeIdleTimer) clearTimeout(forgeIdleTimer);
+  forgeIdleTimer = setTimeout(shutdownForge, FORGE_IDLE_TIMEOUT);
+  forgeIdleTimer.unref?.(); // don't keep the event loop alive just for this
+}
+
 /** Run Forge txt2img; returns a PNG Buffer. */
 async function forgeTxt2img(prompt) {
   const res = await fetch(`${FORGE_URL}/sdapi/v1/txt2img`, {
@@ -171,7 +205,11 @@ async function generate(key, facts, force) {
 
   inFlight.set(key, work);
   try { return await work; }
-  finally { inFlight.delete(key); }
+  finally {
+    inFlight.delete(key);
+    // Re-arm Forge's idle countdown after each generation completes.
+    scheduleForgeShutdown();
+  }
 }
 
 function readBody(req) {
