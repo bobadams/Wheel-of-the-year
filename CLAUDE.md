@@ -213,16 +213,18 @@ location /forge-api/ {
 ```
 
 ### Image fetch module
-`src/fetch/image.js` — exports `generateLandscapeImage(data, options?)`.
+`src/fetch/image.js` — exports `fetchWheelImage(data, { force })` plus the helpers
+`classifyBiome`, `buildImageFacts`, `monthlyConditions`, and `locationKey`.
 
-- Takes `currentData` (must have `temp`, `rain`, `evi`, `lat`, `name` populated)
-- Classifies into a biome (tropical rainforest, temperate forest, desert, etc.) from mean temp/rain/EVI
-- Picks a season from today's DOY and hemisphere
-- Builds a prompt with biome + season + animals + photography style keywords
-- POSTs to `/forge-api/sdapi/v1/txt2img`, returns a blob URL
-- Default size: 768×512, 25 steps, DPM++ 2M Karras
+- Takes `currentData` (needs `temp`, `rain`, `evi`, `lat`, `name`; `snow` optional)
+- `buildImageFacts` → biome + means + hemisphere + the 12-band `monthly` array
+- POSTs `{ key, facts, force }` to the **image service** at `/wheel-images/generate`
+  (not Forge directly) and returns a blob URL
+- The service renders **img2img** at 1024×512 over a data-driven init (see
+  "Center Ecology Image — tiny planet" below); the client warps it into a planet
 
-In local dev, set `VITE_FORGE_URL=http://macmini.local:7860` in `.env.local` to bypass the nginx proxy.
+In local dev, set `VITE_IMAGE_URL=http://macmini.local:7871` in `.env.local` to hit
+the image service directly (Forge itself is no longer called from the browser).
 
 ### Common issues
 - **Black images:** Always run with `--no-half --no-half-vae`. Restart Forge completely (kill all python3.10 processes) when changing flags — partial restarts leave old process on port 7860.
@@ -230,22 +232,39 @@ In local dev, set `VITE_FORGE_URL=http://macmini.local:7860` in `.env.local` to 
 - **Model download:** Use `huggingface_hub.hf_hub_download()` in the Forge venv, not `curl` — HuggingFace's XetHub CDN truncates large files with plain curl.
 - **CLIP install failure (`pkg_resources`):** Pre-install from local patched source at `/tmp/clip-install` (setup.py with `pkg_resources` removed) before running `webui.sh`.
 
-## Center Ecology Image
+## Center Ecology Image — "tiny planet"
 
-The center of the wheel shows an AI-generated photo of the location's ecology
-(native landscape + wildlife), masked to a circle filling the center hole and
-drawn *behind* the rings, axes, labels, and decorations.
+The center of the wheel shows an AI-generated **"little planet"** (stereographic)
+view of the location's ecology, masked to a circle filling the center hole and
+drawn *behind* the rings, axes, labels, and decorations. Its seasonal coloring
+is driven by the location's **actual** yearly climate data, not a generic
+four-season template — so a place green in its wet winter and golden in its dry
+summer (e.g. Oakland) renders that way.
 
 ### Pipeline
-1. `src/fetch/image.js` builds a compact **facts** payload from `currentData`
-   (biome via `classifyBiome`, mean temp/rain, vegetation index, hemisphere) and
-   POSTs `{ key, facts, force }` to `/wheel-images/generate`.
-2. The **image service** (`server/image-server.mjs`, Node, zero deps) on the Mac
-   mini serves a disk-cached PNG for that location key, or — on a miss / `force`
-   — asks **Ollama** (`llama3.2:3b`, the astrology project's model) to compose a
-   detailed location-specific Stable Diffusion prompt, runs **Forge** txt2img
-   (768×768), caches the PNG + prompt to `image-cache/<key>.png`, and returns it.
-3. `src/draw/centerImage.js` draws the loaded image clipped to the center hole.
+1. `src/fetch/image.js` builds a compact **facts** payload from `currentData`:
+   biome via `classifyBiome`, mean temp/rain, vegetation index, hemisphere, plus
+   `monthly` — `monthlyConditions()` bins the real `temp`/`rain`/`evi`/`snow`
+   arrays into **12 time-bands** (anchored at DOY 0 = winter solstice, like the
+   wheel), each normalized to warmth/vegetation/wetness/snow/cold. POSTs
+   `{ key, facts, force }` to `/wheel-images/generate`.
+2. The **image service** (`server/image-server.mjs`, Node, zero deps) serves a
+   disk-cached PNG for that key, or — on a miss / `force`:
+   - asks **Ollama** (`llama3.2:3b`) for a season-order-agnostic ecology prompt
+     (terrain/plants/wildlife only — it must **not** name or order seasons);
+   - synthesizes a **data-driven init** image with `buildSeasonalInitPNG()` (a
+     pure-Node PNG encoder): a flat 1024×512 equirectangular strip whose width is
+     the local year and whose colors come from the 12 bands (green where veg is
+     high, golden where warm+sparse, white where cold/snowy), sky over ground;
+   - runs **Forge img2img** over that init (`denoising_strength` ≈ 0.7, env
+     `IMG2IMG_DENOISE`; `tiling:true` for a seamless horizontal wrap) so the
+     photographic landscape honors the data-driven seasonal layout;
+   - caches `<key>.png` + `<key>.txt` (prompt) + `<key>.init.png` (debug init).
+   Falls back to plain `txt2img` when `facts.monthly` is absent.
+3. `src/draw/centerImage.js` **stereographically warps** the flat panorama into a
+   sealed little planet filling the center hole: angle→year (winter solstice seam
+   at top), radius→ground(centre)…horizon…sky(rim). The warp is cached and only
+   rebuilt when the image or hole radius changes.
 
 Caching is keyed by slugified location name, so each location generates once.
 The control panel has an **Ecology image** toggle and a **Generate new image**
@@ -323,5 +342,7 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Update Oakland preset data | `npm run generate-presets` |
 | Add a new preset city | `src/data/presets.js` and preset button in `index.html` or `main.js` |
 | Change tooltip content | `ui/tooltip.js` |
-| Change image generation prompts / biome logic | `fetch/image.js` |
-| Change image size or sampler settings | `fetch/image.js` (`generateLandscapeImage` default options) |
+| Change image generation prompts / biome logic | `server/image-server.mjs` (`composePrompt`, `PANORAMA_PREFIX`); biome in `fetch/image.js` |
+| Change the data→color seasonal mapping | `fetch/image.js` (`monthlyConditions`) and `server/image-server.mjs` (`groundColor`, `buildSeasonalInitPNG`) |
+| Change image size / sampler / denoise | `server/image-server.mjs` (`forgeImg2img`, `IMG2IMG_DENOISE`) |
+| Change the little-planet warp | `src/draw/centerImage.js` (`buildLittlePlanet`) |
