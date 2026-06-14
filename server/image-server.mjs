@@ -59,8 +59,12 @@ const NEGATIVE_PROMPT = [
 // This prefix is prepended to every prompt; the LLM only writes the ecology body.
 const PANORAMA_PREFIX = [
   'equirectangular 360 panorama, flat horizontal panoramic strip, perfectly level straight horizon, ultra wide aspect ratio',
-  'a continuous landscape that cycles through the seasons from left to right: deep snowy winter on the far left edge, then spring blossoms, then lush green summer in the middle, then golden autumn foliage, returning to deep snowy winter on the far right edge',
-  'the far-left and far-right edges match (both snowy winter) so the panorama wraps seamlessly',
+  'the SAME landscape shown in four distinct side-by-side vertical bands, one per season, with sharp visible boundaries between them',
+  'far-left band (deep snowy winter:1.3), bare trees and snow-covered ground',
+  'second band (spring:1.2), fresh blossoms and new green shoots',
+  'middle band (lush green summer:1.2), full foliage and tall grass',
+  'fourth band (golden autumn:1.3), orange and amber falling leaves',
+  'far-right band (deep snowy winter:1.3) again so the left and right edges match for a seamless wrap',
 ].join(', ');
 
 // Dedupe concurrent requests for the same key so we never run Forge twice.
