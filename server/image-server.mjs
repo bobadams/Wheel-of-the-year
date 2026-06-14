@@ -138,9 +138,10 @@ const FORGE_SEED = Number(process.env.FORGE_SEED ?? 12345);
 // ecology, low enough to keep the framing (low horizon, sky on top).
 const FRAMING_DENOISE = Number(process.env.FRAMING_DENOISE ?? 0.82);
 // Fraction of the panorama HEIGHT that is sky above the horizon. The warp maps the
-// top rows to the planet's rim, so a generous sky band → a clean rim and the
-// planet floats; the ground/ecology lands in the inner disc, un-stretched.
-const SKY_FRACTION = Number(process.env.SKY_FRACTION ?? 0.6);
+// top rows to the planet's rim, so this sky band becomes a clean rim and the
+// planet floats; the rest is ground/ecology in the inner disc. ~0.42 leaves a
+// clean rim while keeping the planet body (and its ecology) large.
+const SKY_FRACTION = Number(process.env.SKY_FRACTION ?? 0.42);
 
 // Dedupe concurrent requests for the same key so we never run Forge twice.
 const inFlight = new Map();
@@ -199,11 +200,13 @@ async function composeScene(facts) {
   return `${f.biome ?? 'temperate'} landscape near ${f.name ?? 'a natural region'}, rolling terrain, scattered native trees and shrubs, ground cover, native wildlife`;
 }
 
-// Planet-framing words: keep the horizon low and the whole upper frame clear sky
-// so the warp's rim is clean (floating planet) and nothing tall reaches the top.
+// Planet-framing words: keep the horizon low with clear sky ABOVE the treetops so
+// the warp's rim stays clean (floating planet) — but the ecology below is rich
+// and prominent, not suppressed. The "above the treetops" phrasing keeps tall
+// growth in the lower band rather than poking into the rim.
 const FRAMING_PROMPT = [
-  'very low horizon near the bottom, vast expansive empty clear sky filling the upper two thirds of the frame',
-  'wide establishing aerial view, distant low vegetation, nothing tall in the foreground, open and unobstructed',
+  'low horizon in the lower third, clear open sky filling the area above the treetops',
+  'rich detailed lush native vegetation filling the foreground and midground, abundant trees shrubs and plants, full of life and texture, varied and dense but below the open sky',
 ].join(', ');
 
 /**

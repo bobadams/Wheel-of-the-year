@@ -491,6 +491,95 @@ function resizeCanvas() {
   canvas.H  = sz + titleH;
   canvas.CX = sz / 2;
   canvas.CY = titleH + sz / 2;
+
+  resetWheelZoom();
+}
+
+// ─── Pinch-zoom on the wheel ──────────────────────────────────────────────────
+// Lets the user pinch/pan *just* the canvas in place (the page itself never
+// zooms). The high-resolution backing store from resizeCanvas() keeps the
+// CSS-scaled wheel crisp. Coordinates are tracked in the untransformed
+// .wheel-wrap box; the canvas carries the live transform.
+const ZOOM_MAX = 4;
+const zoom = { scale: 1, tx: 0, ty: 0 };
+const zPointers = new Map();   // pointerId → {x, y} client coords
+let zPinch = null;             // pinch anchor while two fingers are down
+let zPanLast = null;           // last client point while one finger pans
+
+function resetWheelZoom() {
+  zoom.scale = 1; zoom.tx = 0; zoom.ty = 0;
+  zPointers.clear(); zPinch = null; zPanLast = null;
+  if (canvas.el) applyWheelZoom();
+}
+
+function applyWheelZoom() {
+  const el = canvas.el;
+  const w = el.clientWidth, h = el.clientHeight;
+  // Keep the scaled canvas covering its box (no gaps at the edges).
+  zoom.tx = Math.min(0, Math.max(-(zoom.scale - 1) * w, zoom.tx));
+  zoom.ty = Math.min(0, Math.max(-(zoom.scale - 1) * h, zoom.ty));
+  el.style.transform = `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`;
+  // While zoomed we own all gestures; at rest, allow normal vertical page scroll.
+  el.style.touchAction = zoom.scale > 1.001 ? 'none' : 'pan-y';
+}
+
+function setupWheelZoom() {
+  const el = canvas.el;
+  const wrapRect = () => el.parentElement.getBoundingClientRect();
+
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    el.setPointerCapture(e.pointerId);
+    zPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (zPointers.size === 2) {
+      const [a, b] = [...zPointers.values()];
+      const r = wrapRect();
+      const fx = (a.x + b.x) / 2 - r.left, fy = (a.y + b.y) / 2 - r.top;
+      zPinch = {
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+        scale: zoom.scale,
+        cx: (fx - zoom.tx) / zoom.scale,   // content point under the pinch midpoint
+        cy: (fy - zoom.ty) / zoom.scale,
+      };
+      zPanLast = null;
+    } else if (zPointers.size === 1) {
+      zPanLast = { x: e.clientX, y: e.clientY };
+    }
+  });
+
+  el.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'touch' || !zPointers.has(e.pointerId)) return;
+    zPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (zPointers.size >= 2 && zPinch) {
+      const [a, b] = [...zPointers.values()];
+      const r = wrapRect();
+      const fx = (a.x + b.x) / 2 - r.left, fy = (a.y + b.y) / 2 - r.top;
+      const newScale = Math.max(1, Math.min(ZOOM_MAX,
+        zPinch.scale * Math.hypot(a.x - b.x, a.y - b.y) / zPinch.dist));
+      zoom.scale = newScale;
+      zoom.tx = fx - zPinch.cx * newScale;   // pin the original point under the fingers
+      zoom.ty = fy - zPinch.cy * newScale;
+      applyWheelZoom();
+      e.preventDefault();
+    } else if (zPointers.size === 1 && zoom.scale > 1.001 && zPanLast) {
+      zoom.tx += e.clientX - zPanLast.x;
+      zoom.ty += e.clientY - zPanLast.y;
+      zPanLast = { x: e.clientX, y: e.clientY };
+      applyWheelZoom();
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  const onUp = e => {
+    if (e.pointerType !== 'touch') return;
+    zPointers.delete(e.pointerId);
+    zPinch = null;
+    // If one finger remains, hand off to panning from its current position.
+    zPanLast = zPointers.size === 1 ? [...zPointers.values()][0] : null;
+  };
+  el.addEventListener('pointerup', onUp);
+  el.addEventListener('pointercancel', onUp);
 }
 
 function init() {
@@ -535,6 +624,8 @@ function init() {
       }
     }
   });
+
+  setupWheelZoom();
 
   // Wire up buttons/inputs that use onclick in HTML via module-scope exposure
   window.fetchCity     = fetchCity;
