@@ -109,23 +109,8 @@ function decodePNG(buf) {
 }
 
 const lerp = (a, b, t) => a + (b - a) * t;
-const clamp01 = x => (x < 0 ? 0 : x > 1 ? 1 : x);
 
-/** Circularly interpolate the 12 monthly bands at year-fraction `frac` (0–1). */
-function sampleMonthly(monthly, frac) {
-  const B = monthly.length;
-  const x = frac * B;
-  const i = ((Math.floor(x) % B) + B) % B;
-  const j = (i + 1) % B;
-  const f = x - Math.floor(x);
-  const g = k => lerp(monthly[i][k] ?? 0, monthly[j][k] ?? 0, f);
-  return { warm: g('warm'), veg: g('veg'), wet: g('wet'), snow: g('snow'), cold: g('cold') };
-}
-
-/** Does this location have an actual snowfall series (vs. only a cold proxy)? */
-function locationHasSnow(monthly) {
-  return monthly.some(b => b && b.snow != null && b.snow > 0);
-}
+const smoothstep = t => t * t * (3 - 2 * t);
 
 const NEGATIVE_PROMPT = [
   'blurry, cartoon, painting, illustration, anime, deformed',
@@ -136,14 +121,11 @@ const NEGATIVE_PROMPT = [
   'lowres, bad anatomy, worst quality, oversaturated',
 ].join(', ');
 
-// The client (src/draw/centerImage.js) stereographically warps the generated
-// image into a sealed "little planet". For that warp to work the SOURCE must be
-// a FLAT equirectangular strip whose WIDTH carries the seasonal cycle, with
-// Flat-panorama framing, prepended to every Forge prompt. The client warps the
-// result into a little planet, so the SOURCE must stay a flat equirectangular
-// strip (level horizon, seamless wrap). The *seasonal* content is no longer in
-// this prefix — it comes from the per-variant condition phrase (composeCondition)
-// and the multi-pass composite.
+// Flat-panorama framing, prepended to every Forge prompt. The client
+// (src/draw/centerImage.js) stereographically warps the result into a sealed
+// "little planet", so the SOURCE must stay a FLAT equirectangular strip (level
+// horizon, seamless wrap). Planet framing (low horizon, clear sky on top) is
+// added by FRAMING_PROMPT + the framing init.
 const SCENE_PREFIX = [
   'equirectangular 360 panorama, flat horizontal panoramic strip, perfectly level straight horizon, ultra wide aspect ratio',
   'one continuous natural landscape, seamless left-right wrap',
@@ -151,14 +133,14 @@ const SCENE_PREFIX = [
 
 const QUALITY = 'photorealistic, natural light, professional nature photography, National Geographic style, sharp focus, 8k';
 
-// Fixed seed so the base scene and all seasonal variants share the SAME terrain,
-// letting them composite/blend cleanly (same hill at column x, different season).
-const FORGE_SEED       = Number(process.env.FORGE_SEED ?? 12345);
-// How many data-placed seasonal variants to render and blend across the year.
-const SEASON_VARIANTS  = Number(process.env.SEASON_VARIANTS ?? 4);
-// img2img strength for the variants: high enough to swap surface features
-// (green↔dead↔snow), low enough to keep the base terrain structure.
-const VARIANT_DENOISE  = Number(process.env.VARIANT_DENOISE ?? 0.58);
+const FORGE_SEED = Number(process.env.FORGE_SEED ?? 12345);
+// img2img strength over the framing init. High enough to invent rich photographic
+// ecology, low enough to keep the framing (low horizon, sky on top).
+const FRAMING_DENOISE = Number(process.env.FRAMING_DENOISE ?? 0.82);
+// Fraction of the panorama HEIGHT that is sky above the horizon. The warp maps the
+// top rows to the planet's rim, so a generous sky band → a clean rim and the
+// planet floats; the ground/ecology lands in the inner disc, un-stretched.
+const SKY_FRACTION = Number(process.env.SKY_FRACTION ?? 0.6);
 
 // Dedupe concurrent requests for the same key so we never run Forge twice.
 const inFlight = new Map();
@@ -179,14 +161,15 @@ async function composeScene(facts) {
   const f = facts || {};
   const instruction = [
     'You write the descriptive body of a prompt for a text-to-image model (Stable Diffusion).',
-    'Describe the VARIED natural landscape of one specific place: its distinctive landforms (e.g.',
-    'rolling hills, rocky outcrops, a creek or pond, scattered groves, ridgelines), SEVERAL kinds of',
-    'native vegetation (not just grass — name trees, shrubs, and ground cover typical of the region),',
-    'and one or two representative wild animals. Make it visually varied and specific to this place.',
-    'Produce ONE comma-separated fragment (max ~55 words). Do NOT mention seasons, weather, color,',
-    'snow, or time of year — those are added separately. Do NOT write "tiny planet", "globe",',
-    '"sphere", "fisheye", "panorama", or "curved". No people, no buildings, no text.',
-    'Output ONLY the fragment, nothing else.',
+    'Describe the VARIED, distinctive natural landscape of one specific place so it is instantly',
+    'recognizable and interesting — NOT a generic field. Name its characteristic landforms (e.g.',
+    'rolling hills, rocky outcrops, a creek or pond, scattered groves, ridgelines, dunes, wetland),',
+    'SEVERAL kinds of native vegetation (trees, shrubs, ground cover specific to the region), and',
+    'one or two representative wild animals. Favor an open landscape with a wide view.',
+    'Produce ONE comma-separated fragment (max ~55 words). Do NOT mention sky, horizon, framing,',
+    'seasons, weather, color, snow, or time of year — those are added separately. Do NOT write',
+    '"tiny planet", "globe", "sphere", "fisheye", "panorama", or "curved". No people, no buildings,',
+    'no text. Output ONLY the fragment, nothing else.',
     '',
     'Location facts:',
     `- Place: ${f.name ?? 'unknown'}`,
@@ -216,32 +199,65 @@ async function composeScene(facts) {
   return `${f.biome ?? 'temperate'} landscape near ${f.name ?? 'a natural region'}, rolling terrain, scattered native trees and shrubs, ground cover, native wildlife`;
 }
 
+// Planet-framing words: keep the horizon low and the whole upper frame clear sky
+// so the warp's rim is clean (floating planet) and nothing tall reaches the top.
+const FRAMING_PROMPT = [
+  'very low horizon near the bottom, vast expansive empty clear sky filling the upper two thirds of the frame',
+  'wide establishing aerial view, distant low vegetation, nothing tall in the foreground, open and unobstructed',
+].join(', ');
+
 /**
- * Turn one band's REAL conditions into feature+color words for img2img — this is
- * where a season actually changes what's on the ground, not just its tint. Driven
- * by data thresholds (vegetation, warmth, wetness, snow/cold), so a place reads
- * dead and dry when its data says so, lush when wet, snowy only when it snows.
+ * Build a flat framing init: clear sky over the top SKY_FRACTION of the height,
+ * neutral ground below, soft horizon blend. img2img invents the ecology over the
+ * ground while keeping the horizon low and the sky band clear — so the warped
+ * planet floats and tree-tops never reach the stretched rim.
  */
-function composeCondition(c, hasSnow) {
-  const snowy = hasSnow ? clamp01(c.snow) : 0;
-  const parts = [];
-  if (snowy > 0.45) {
-    parts.push('deep fresh snow covering the ground, snow-laden bare branches, frozen, white winter landscape');
-  } else {
-    if (snowy > 0.12) parts.push('patchy snow on the ground, frost, bare branches');
-    if (c.veg > 0.62) {
-      parts.push('lush vivid green vegetation, dense fresh foliage, vibrant new growth, wildflowers in bloom, verdant and alive');
-    } else if (c.veg > 0.4) {
-      parts.push('green and tan mixed vegetation, healthy foliage, some flowering plants');
-    } else if (c.warm > 0.5) {
-      parts.push('dead dry dormant grass, parched cracked bare earth, withered brown and golden stalks, sun-scorched and lifeless, sparse dry brush');
+function buildFramingInitPNG(W = 1024, H = 512) {
+  const data = Buffer.alloc(W * H * 4);
+  const horizon = Math.round(H * SKY_FRACTION);
+  const skyTop = [120, 158, 205], skyHorizon = [196, 210, 224];
+  const ground = [128, 122, 96];
+  for (let y = 0; y < H; y++) {
+    let r, g, b;
+    if (y < horizon) {
+      const f = y / horizon;                       // 0 top … 1 horizon
+      r = lerp(skyTop[0], skyHorizon[0], f); g = lerp(skyTop[1], skyHorizon[1], f); b = lerp(skyTop[2], skyHorizon[2], f);
     } else {
-      parts.push('dormant muted brown vegetation, bare twigs, faded dry ground cover, leafless');
+      const f = (y - horizon) / (H - horizon);     // darken slightly toward foreground
+      r = ground[0] * (1 - 0.25 * f); g = ground[1] * (1 - 0.25 * f); b = ground[2] * (1 - 0.25 * f);
     }
-    if (c.wet > 0.55 && snowy < 0.12) parts.push('damp ground, full creek');
-    else if (c.wet < 0.2 && c.warm > 0.5) parts.push('dusty, drought-stricken');
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      data[i] = r | 0; data[i + 1] = g | 0; data[i + 2] = b | 0; data[i + 3] = 255;
+    }
   }
-  return parts.join(', ');
+  return encodePNG(W, H, data);
+}
+
+/**
+ * Guarantee a clean sky rim: blend the very top of the panorama toward the scene's
+ * own average sky color, fading out by the time it reaches the horizon band. Even
+ * if Forge pokes a treetop into the top, this clears it so the warped rim is sky.
+ */
+function cleanSkyTop(img) {
+  const { w, h, data } = img;
+  const bandEnd = Math.round(h * SKY_FRACTION * 0.55); // fade out well above the horizon
+  // Sample mean sky color from the top few rows.
+  let sr = 0, sg = 0, sb = 0, n = 0;
+  for (let y = 0; y < Math.max(1, (h * 0.04) | 0); y++) {
+    for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; sr += data[i]; sg += data[i + 1]; sb += data[i + 2]; n++; }
+  }
+  sr /= n; sg /= n; sb /= n;
+  for (let y = 0; y < bandEnd; y++) {
+    const a = 1 - smoothstep(y / bandEnd);         // 1 at top → 0 at bandEnd
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      data[i]     = data[i]     + (sr - data[i])     * a;
+      data[i + 1] = data[i + 1] + (sg - data[i + 1]) * a;
+      data[i + 2] = data[i + 2] + (sb - data[i + 2]) * a;
+    }
+  }
+  return img;
 }
 
 /** Is Forge up and serving its API? */
@@ -304,31 +320,8 @@ function scheduleForgeShutdown() {
   forgeIdleTimer.unref?.(); // don't keep the event loop alive just for this
 }
 
-/** Run Forge txt2img; returns a PNG Buffer. Shared seed keeps terrain stable. */
-async function forgeTxt2img(prompt, { seed = FORGE_SEED, steps = 25 } = {}) {
-  const res = await fetch(`${FORGE_URL}/sdapi/v1/txt2img`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      negative_prompt: NEGATIVE_PROMPT,
-      seed,
-      steps,
-      width: 1024,   // 2:1 equirectangular strip the client warps into a planet
-      height: 512,
-      cfg_scale: 7,
-      sampler_name: 'DPM++ 2M Karras',
-      tiling: true,  // seamless horizontal wrap
-    }),
-  });
-  if (!res.ok) throw new Error(`Forge ${res.status} ${res.statusText}`);
-  const json = await res.json();
-  if (!json.images?.[0]) throw new Error('Forge returned no image');
-  return Buffer.from(json.images[0], 'base64');
-}
-
 /** Run Forge img2img over a base PNG; returns a PNG Buffer. */
-async function forgeImg2img(prompt, initPng, { seed = FORGE_SEED, denoise = VARIANT_DENOISE, steps = 24 } = {}) {
+async function forgeImg2img(prompt, initPng, { seed = FORGE_SEED, denoise = FRAMING_DENOISE, steps = 28 } = {}) {
   const res = await fetch(`${FORGE_URL}/sdapi/v1/img2img`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -352,61 +345,18 @@ async function forgeImg2img(prompt, initPng, { seed = FORGE_SEED, denoise = VARI
   return Buffer.from(json.images[0], 'base64');
 }
 
-/** True when we have the 12-band monthly data needed for the seasonal composite. */
-function hasMonthly(facts) {
-  return Array.isArray(facts?.monthly) && facts.monthly.length === 12;
-}
-
-const smoothstep = t => t * t * (3 - 2 * t);
-
 /**
- * Composite N seasonal variants (each a decoded full-width panorama of the SAME
- * terrain in a different seasonal state) into one strip whose WIDTH is the year.
- * Column x (year fraction x/W) is taken from variant column x, cross-faded between
- * the two variants whose phases bracket that fraction. Variant 0 sits at the
- * winter-solstice seam (x=0 and x=W), so the wrap stays seamless.
+ * Render the planet source: img2img a rich, place-specific ecology over the
+ * low-horizon framing init, then clear the top band to clean sky. The result is a
+ * flat strip whose lower disc holds varied ecology and whose top maps to a clean,
+ * floating rim when the client warps it. Returns a PNG Buffer.
  */
-function compositeSeasonalStrip(variants) {
-  const N = variants.length;
-  const W = variants[0].w, H = variants[0].h;
-  const out = Buffer.alloc(W * H * 4);
-  for (let x = 0; x < W; x++) {
-    const s = (x / W) * N;          // phase position along the year
-    const i = Math.floor(s) % N;
-    const j = (i + 1) % N;
-    const t = smoothstep(s - Math.floor(s));
-    const A = variants[i].data, B = variants[j].data;
-    for (let y = 0; y < H; y++) {
-      const p = (y * W + x) * 4;
-      out[p]     = A[p]     + (B[p]     - A[p])     * t;
-      out[p + 1] = A[p + 1] + (B[p + 1] - A[p + 1]) * t;
-      out[p + 2] = A[p + 2] + (B[p + 2] - A[p + 2]) * t;
-      out[p + 3] = 255;
-    }
-  }
-  return encodePNG(W, H, out);
-}
-
-/**
- * Multi-pass seasonal render: one varied base scene, then SEASON_VARIANTS img2img
- * passes that re-skin the SAME terrain into each data-placed season (features +
- * color from composeCondition), composited across the year. Returns a PNG Buffer.
- */
-async function renderSeasonalComposite(scene, monthly, debug) {
-  const hasSnow = locationHasSnow(monthly);
-  const base = await forgeTxt2img(`${SCENE_PREFIX}, ${scene}, soft overcast daylight, ${QUALITY}`);
-  if (debug) debug.base = base;
-
-  const variants = [];
-  for (let i = 0; i < SEASON_VARIANTS; i++) {
-    const band = sampleMonthly(monthly, i / SEASON_VARIANTS);
-    const cond = composeCondition(band, hasSnow);
-    const prompt = `${SCENE_PREFIX}, ${scene}, ${cond}, ${QUALITY}`;
-    const png = await forgeImg2img(prompt, base);
-    variants.push(decodePNG(png));
-    if (debug) (debug.variants ??= []).push({ png, prompt });
-  }
-  return compositeSeasonalStrip(variants);
+async function renderPlanetSource(scene) {
+  const init = buildFramingInitPNG();
+  const prompt = `${SCENE_PREFIX}, ${scene}, ${FRAMING_PROMPT}, ${QUALITY}`;
+  const raw = await forgeImg2img(prompt, init, { denoise: FRAMING_DENOISE, steps: 28 });
+  const decoded = cleanSkyTop(decodePNG(raw));
+  return { png: encodePNG(decoded.w, decoded.h, decoded.data), prompt };
 }
 
 async function generate(key, facts, force) {
@@ -424,17 +374,7 @@ async function generate(key, facts, force) {
     const scene = await composeScene(facts);
     await ensureForge();
     await fs.mkdir(CACHE_DIR, { recursive: true });
-    // Preferred path: a varied base scene re-skinned into each real season and
-    // composited across the year. Fall back to a single txt2img when monthly
-    // data is absent (e.g. sparse presets).
-    let png, prompt;
-    if (hasMonthly(facts)) {
-      png = await renderSeasonalComposite(scene, facts.monthly);
-      prompt = `${SCENE_PREFIX}, ${scene}, [+${SEASON_VARIANTS} data-driven seasonal variants], ${QUALITY}`;
-    } else {
-      prompt = `${SCENE_PREFIX}, ${scene}, ${QUALITY}`;
-      png = await forgeTxt2img(prompt);
-    }
+    const { png, prompt } = await renderPlanetSource(scene);
     await fs.writeFile(pngPath, png);
     await fs.writeFile(promptPath, prompt);
     return png;
