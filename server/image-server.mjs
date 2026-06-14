@@ -93,15 +93,33 @@ function sampleMonthly(monthly, frac) {
   return { warm: g('warm'), veg: g('veg'), wet: g('wet'), snow: g('snow'), cold: g('cold') };
 }
 
+/**
+ * Whiteness (0–1) of a band's ground from snow cover. Prefers the REAL snowfall
+ * series; only falls back to a temperature "cold" proxy when the location has no
+ * snow data at all — so a cold-but-dry place that never gets snow does not wrongly
+ * turn white, while a snowy place whitens exactly when/where it actually snows.
+ */
+function snowWhiteness(c, hasSnow) {
+  return hasSnow ? clamp01(c.snow) : clamp01(c.cold * 0.7);
+}
+
 /** Ground color for one band from its real conditions (green↔brown↔gold↔snow). */
-function groundColor(c) {
-  const brown = [150, 120, 80], green = [70, 130, 55], gold = [200, 170, 70], white = [235, 238, 245];
+function groundColor(c, hasSnow) {
+  const brown = [150, 120, 80], green = [70, 130, 55], gold = [200, 170, 70];
+  const white = [235, 238, 245], gray = [120, 122, 125];
   let col = mixRGB(brown, green, c.veg);              // greenness from vegetation index
   const dryness = clamp01((1 - c.veg) * c.warm);      // warm + sparse veg → golden dry hills
   col = mixRGB(col, gold, dryness * 0.6);
-  const snowy = clamp01(Math.max(c.snow, c.cold));    // snow series, or cold when none
-  col = mixRGB(col, white, snowy * 0.85);
+  const snowy = snowWhiteness(c, hasSnow);
+  // Cold, snow-free months read dormant — desaturate toward gray before snow.
+  col = mixRGB(col, gray, clamp01(c.cold) * (1 - snowy) * 0.3);
+  col = mixRGB(col, white, snowy * 0.9);
   return col;
+}
+
+/** Does this location have an actual snowfall series (vs. only a cold proxy)? */
+function locationHasSnow(monthly) {
+  return monthly.some(b => b && b.snow != null && b.snow > 0);
 }
 
 /**
@@ -113,11 +131,12 @@ function groundColor(c) {
 function buildSeasonalInitPNG(monthly, W = 1024, H = 512) {
   const data = Buffer.alloc(W * H * 4);
   const horizon = Math.round(H * 0.42);
+  const hasSnow = locationHasSnow(monthly);
   for (let x = 0; x < W; x++) {
     const c = sampleMonthly(monthly, x / W);
-    const g = groundColor(c);
-    const snowy = clamp01(Math.max(c.snow, c.cold));
-    const sky = [lerp(120, 205, snowy), lerp(160, 212, snowy), lerp(210, 224, snowy)]; // paler when cold
+    const g = groundColor(c, hasSnow);
+    const snowy = snowWhiteness(c, hasSnow);
+    const sky = [lerp(120, 205, snowy), lerp(160, 212, snowy), lerp(210, 224, snowy)]; // paler when snowy
     for (let y = 0; y < H; y++) {
       let col;
       if (y < horizon) {

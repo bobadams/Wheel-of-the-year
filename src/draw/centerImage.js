@@ -109,7 +109,11 @@ export function drawCenterImage(layouts) {
   if (R <= 0) return;
   if (!(img.naturalWidth || img.width)) return;
 
-  const planet = littlePlanetFor(img, R);
+  // Build the warp at the canvas's backing resolution (R is in logical units;
+  // canvas.scale is the supersample factor) so the planet stays crisp when the
+  // page is pinch-zoomed, then draw it back into the logical 2R×2R hole box.
+  const scale  = canvas.scale || 1;
+  const planet = littlePlanetFor(img, R * scale);
 
   ctx.save();
   // Circular mask (also hides any sub-pixel rounding at the disc edge).
@@ -117,8 +121,8 @@ export function drawCenterImage(layouts) {
   ctx.arc(CX, CY, R, 0, Math.PI * 2);
   ctx.clip();
 
-  // The warped canvas is exactly the 2R×2R bounding square of the hole.
-  ctx.drawImage(planet, CX - planet.width / 2, CY - planet.height / 2);
+  // The warped canvas is the 2R*scale square; map it onto the logical 2R hole.
+  ctx.drawImage(planet, CX - R, CY - R, R * 2, R * 2);
 
   // Soft inner vignette so ring labels/text stay legible over the image.
   const grad = ctx.createRadialGradient(CX, CY, R * 0.55, CX, CY, R);

@@ -467,8 +467,21 @@ async function exportSVG() {
 function resizeCanvas() {
   const sz = Math.min(660, window.innerWidth * .92);
   const titleH = Math.round(sz * 0.083);
-  canvas.el.width  = sz;
-  canvas.el.height = sz + titleH;
+
+  // Render the backing store at a higher resolution than the CSS display size so
+  // the wheel stays crisp on retina screens and when pinch-zoomed in mobile
+  // Safari. The drawing code works in logical (CSS) units; setTransform(scale…)
+  // maps those onto the denser pixel grid. Cap the product so the canvas stays a
+  // sane size on phones with devicePixelRatio 3.
+  const dpr   = window.devicePixelRatio || 1;
+  const scale = Math.min(dpr * 2, 4); // extra headroom for pinch-zoom, bounded for perf
+  canvas.el.width        = Math.round(sz * scale);
+  canvas.el.height       = Math.round((sz + titleH) * scale);
+  canvas.el.style.width  = sz + 'px';
+  canvas.el.style.height = (sz + titleH) + 'px';
+  canvas.ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+  canvas.scale = scale;
   canvas.W  = sz;
   canvas.H  = sz + titleH;
   canvas.CX = sz / 2;
