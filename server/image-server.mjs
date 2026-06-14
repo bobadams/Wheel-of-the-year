@@ -292,11 +292,12 @@ async function forgeTxt2img(prompt) {
       negative_prompt: NEGATIVE_PROMPT,
       steps: 25,
       // 2:1 equirectangular strip — the client warps it into a little planet,
-      // and its width carries the seasonal cycle (winter→spring→summer→autumn).
+      // and its width carries the seasonal cycle.
       width: 1024,
       height: 512,
       cfg_scale: 7,
       sampler_name: 'DPM++ 2M Karras',
+      tiling: true, // seamless horizontal wrap (see forgeImg2img)
     }),
   });
   if (!res.ok) throw new Error(`Forge ${res.status} ${res.statusText}`);
@@ -320,6 +321,10 @@ async function forgeImg2img(prompt, initPng) {
       height: 512,
       cfg_scale: 7,
       sampler_name: 'DPM++ 2M Karras',
+      // Seamless horizontal wrap so the warp's left/right edges meet without a
+      // radial seam. Vertical tiling is harmless here — top(sky)/bottom(ground)
+      // map to the planet's rim and centre and never touch.
+      tiling: true,
     }),
   });
   if (!res.ok) throw new Error(`Forge img2img ${res.status} ${res.statusText}`);
