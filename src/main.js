@@ -471,10 +471,15 @@ function resizeCanvas() {
   // Render the backing store at a higher resolution than the CSS display size so
   // the wheel stays crisp on retina screens and when pinch-zoomed in mobile
   // Safari. The drawing code works in logical (CSS) units; setTransform(scale…)
-  // maps those onto the denser pixel grid. Cap the product so the canvas stays a
-  // sane size on phones with devicePixelRatio 3.
-  const dpr   = window.devicePixelRatio || 1;
-  const scale = Math.min(dpr * 2, 4); // extra headroom for pinch-zoom, bounded for perf
+  // maps those onto the denser pixel grid.
+  //
+  // Pinch-zoom magnifies the existing bitmap WITHOUT re-rendering the canvas, so
+  // the only way to keep the zoomed-in wheel sharp is to oversample up front.
+  // Oversample to ~3× the device resolution (crisp to roughly 3× pinch), but cap
+  // the longest backing edge to stay under iOS Safari's ~16M-pixel canvas limit.
+  const dpr     = window.devicePixelRatio || 1;
+  const longest = sz + titleH;
+  const scale   = Math.max(dpr, Math.min(dpr * 3, 4096 / longest));
   canvas.el.width        = Math.round(sz * scale);
   canvas.el.height       = Math.round((sz + titleH) * scale);
   canvas.el.style.width  = sz + 'px';
