@@ -44,6 +44,56 @@ function mean(arr) {
     : null;
 }
 
+const clamp01 = x => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+/** Mean of arr over the DOY half-open range [a, b), skipping non-numbers. */
+function binMean(arr, a, b) {
+  if (!Array.isArray(arr)) return null;
+  let s = 0, n = 0;
+  for (let i = a; i < b; i++) {
+    const v = arr[i];
+    if (typeof v === 'number' && !Number.isNaN(v)) { s += v; n++; }
+  }
+  return n ? s / n : null;
+}
+
+/**
+ * Characterize the local year as 12 equal time-bands (one per ~month), each
+ * described by *actual* normalized conditions from this location's data rather
+ * than a generic season template. Band 0 starts at DOY 0 (winter solstice), the
+ * same anchor the wheel and the center-image warp use, so the planet's seasonal
+ * wedges line up with the rings. The image service turns these into the colors
+ * of a synthetic panorama it then runs through img2img — so e.g. a place whose
+ * grass is green in its wet winter and golden in its dry summer renders that
+ * way, not the northern-hemisphere default.
+ *
+ * Each band: veg (greenness 0–1), warm (temp 0–1), wet (rain 0–1), snow (0–1),
+ * cold (below-freezing whiteness 0–1). Values are null when data is missing.
+ */
+export function monthlyConditions(data) {
+  const N = (data.temp?.length) || (data.evi?.length) || 365;
+  const B = 12;
+  const r2 = x => (x == null ? null : Math.round(x * 100) / 100);
+  const out = [];
+  for (let m = 0; m < B; m++) {
+    const a = Math.round((m * N) / B);
+    const b = Math.round(((m + 1) * N) / B);
+    const t    = binMean(data.temp, a, b);   // °F
+    const veg  = binMean(data.evi,  a, b);    // EVI
+    const rain = binMean(data.rain, a, b);    // in/day
+    const snow = binMean(data.snow, a, b);    // in
+    out.push({
+      warm: t    == null ? null : r2(clamp01((t - 32) / (100 - 32))),
+      veg:  veg  == null ? null : r2(clamp01((veg - 0.02) / (0.65 - 0.02))),
+      wet:  rain == null ? null : r2(clamp01(rain / 0.3)),
+      snow: snow == null ? null : r2(clamp01(snow / 12)),
+      // Whiteness from cold even when there's no snow series: 1 at ≤10°F, 0 at ≥40°F.
+      cold: t    == null ? null : r2(clamp01((40 - t) / 30)),
+    });
+  }
+  return out;
+}
+
 /**
  * Build the compact "facts" payload the server uses to compose a prompt.
  * Keeping the climate logic here (where the data lives) lets the server stay a
@@ -63,6 +113,8 @@ export function buildImageFacts(data) {
     // tenths of an inch/day reads more naturally to the LLM as in/month
     meanRainInPerMonth: meanRain == null ? null : Math.round(meanRain * 30 * 10) / 10,
     vegetationIndex: meanEvi == null ? null : Math.round(meanEvi * 100) / 100,
+    // 12 data-driven time-bands the service paints into the warp source.
+    monthly: monthlyConditions(data),
   };
 }
 
