@@ -44,14 +44,8 @@ const FORGE_IDLE_TIMEOUT = Number(process.env.FORGE_IDLE_TIMEOUT ?? 600000); // 
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Lower = the img2img output follows the synthetic seasonal init more faithfully
-// (crisper local seasonal layout, less invented detail); higher = prettier but
-// drifts from the data-driven colors. ~0.7 keeps the layout while letting Forge
-// paint real landscape texture.
-const IMG2IMG_DENOISE = Number(process.env.IMG2IMG_DENOISE ?? 0.7);
-
-// ── Minimal PNG encoder (RGBA, filter 0) — zero deps. Used to synthesize the
-//    data-driven seasonal init image that img2img paints over. ──────────────
+// ── Minimal PNG codec (8-bit, no deps). encodePNG builds the composited strip;
+//    decodePNG reads Forge's PNGs back so we can blend the seasonal variants. ──
 const crcTable = (() => {
   const t = [];
   for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
@@ -78,9 +72,44 @@ function encodePNG(w, h, rgba) {
   ]);
 }
 
+/** Decode an 8-bit PNG (colorType 2 RGB or 6 RGBA, no interlace) → {w,h,data:RGBA}. */
+function decodePNG(buf) {
+  let p = 8, w, h, ct, idat = [];
+  while (p < buf.length) {
+    const len = buf.readUInt32BE(p), type = buf.toString('ascii', p + 4, p + 8);
+    const data = buf.subarray(p + 8, p + 8 + len);
+    if (type === 'IHDR') { w = data.readUInt32BE(0); h = data.readUInt32BE(4); ct = data[9]; }
+    else if (type === 'IDAT') idat.push(data);
+    else if (type === 'IEND') break;
+    p += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const ch = ct === 6 ? 4 : 3, stride = w * ch, out = Buffer.alloc(w * h * 4);
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)];
+    const line = raw.subarray(y * (stride + 1) + 1, y * (stride + 1) + 1 + stride);
+    const cur = Buffer.alloc(stride);
+    for (let x = 0; x < stride; x++) {
+      const a = x >= ch ? cur[x - ch] : 0, b = prev[x], c = x >= ch ? prev[x - ch] : 0;
+      let v = line[x];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c); }
+      cur[x] = v & 255;
+    }
+    for (let x = 0; x < w; x++) {
+      out[(y * w + x) * 4]     = cur[x * ch];
+      out[(y * w + x) * 4 + 1] = cur[x * ch + 1];
+      out[(y * w + x) * 4 + 2] = cur[x * ch + 2];
+      out[(y * w + x) * 4 + 3] = ch === 4 ? cur[x * ch + 3] : 255;
+    }
+    prev = cur;
+  }
+  return { w, h, data: out };
+}
+
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp01 = x => (x < 0 ? 0 : x > 1 ? 1 : x);
-const mixRGB = (c1, c2, t) => [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
 
 /** Circularly interpolate the 12 monthly bands at year-fraction `frac` (0–1). */
 function sampleMonthly(monthly, frac) {
@@ -93,64 +122,9 @@ function sampleMonthly(monthly, frac) {
   return { warm: g('warm'), veg: g('veg'), wet: g('wet'), snow: g('snow'), cold: g('cold') };
 }
 
-/**
- * Whiteness (0–1) of a band's ground from snow cover. Prefers the REAL snowfall
- * series; only falls back to a temperature "cold" proxy when the location has no
- * snow data at all — so a cold-but-dry place that never gets snow does not wrongly
- * turn white, while a snowy place whitens exactly when/where it actually snows.
- */
-function snowWhiteness(c, hasSnow) {
-  return hasSnow ? clamp01(c.snow) : clamp01(c.cold * 0.7);
-}
-
-/** Ground color for one band from its real conditions (green↔brown↔gold↔snow). */
-function groundColor(c, hasSnow) {
-  const brown = [150, 120, 80], green = [70, 130, 55], gold = [200, 170, 70];
-  const white = [235, 238, 245], gray = [120, 122, 125];
-  let col = mixRGB(brown, green, c.veg);              // greenness from vegetation index
-  const dryness = clamp01((1 - c.veg) * c.warm);      // warm + sparse veg → golden dry hills
-  col = mixRGB(col, gold, dryness * 0.6);
-  const snowy = snowWhiteness(c, hasSnow);
-  // Cold, snow-free months read dormant — desaturate toward gray before snow.
-  col = mixRGB(col, gray, clamp01(c.cold) * (1 - snowy) * 0.3);
-  col = mixRGB(col, white, snowy * 0.9);
-  return col;
-}
-
 /** Does this location have an actual snowfall series (vs. only a cold proxy)? */
 function locationHasSnow(monthly) {
   return monthly.some(b => b && b.snow != null && b.snow > 0);
-}
-
-/**
- * Synthesize the equirectangular init image whose WIDTH is the local year
- * (winter solstice at both edges) colored by real monthly conditions, and whose
- * HEIGHT runs sky (top) → ground (bottom). Forge img2img paints photographic
- * landscape over it; the client then warps it into the little planet.
- */
-function buildSeasonalInitPNG(monthly, W = 1024, H = 512) {
-  const data = Buffer.alloc(W * H * 4);
-  const horizon = Math.round(H * 0.42);
-  const hasSnow = locationHasSnow(monthly);
-  for (let x = 0; x < W; x++) {
-    const c = sampleMonthly(monthly, x / W);
-    const g = groundColor(c, hasSnow);
-    const snowy = snowWhiteness(c, hasSnow);
-    const sky = [lerp(120, 205, snowy), lerp(160, 212, snowy), lerp(210, 224, snowy)]; // paler when snowy
-    for (let y = 0; y < H; y++) {
-      let col;
-      if (y < horizon) {
-        const f = y / horizon;                          // lighter toward the horizon
-        col = [lerp(sky[0] * 0.9, sky[0], f), lerp(sky[1] * 0.9, sky[1], f), sky[2]];
-      } else {
-        const f = (y - horizon) / (H - horizon);        // darker toward the foreground
-        col = [g[0] * (1 - 0.3 * f), g[1] * (1 - 0.3 * f), g[2] * (1 - 0.3 * f)];
-      }
-      const i = (y * W + x) * 4;
-      data[i] = col[0] | 0; data[i + 1] = col[1] | 0; data[i + 2] = col[2] | 0; data[i + 3] = 255;
-    }
-  }
-  return encodePNG(W, H, data);
 }
 
 const NEGATIVE_PROMPT = [
@@ -165,16 +139,26 @@ const NEGATIVE_PROMPT = [
 // The client (src/draw/centerImage.js) stereographically warps the generated
 // image into a sealed "little planet". For that warp to work the SOURCE must be
 // a FLAT equirectangular strip whose WIDTH carries the seasonal cycle, with
-// winter on BOTH ends so the wrap seam (left edge meets right edge) is invisible.
-// This prefix is prepended to every prompt; the LLM only writes the ecology body.
-// The seasonal *layout* now comes from the data-driven init image (img2img),
-// not from words — so the prompt must NOT impose a generic winter→summer order.
-// It only asks for a flat panorama that honors the colors already present.
-const PANORAMA_PREFIX = [
+// Flat-panorama framing, prepended to every Forge prompt. The client warps the
+// result into a little planet, so the SOURCE must stay a flat equirectangular
+// strip (level horizon, seamless wrap). The *seasonal* content is no longer in
+// this prefix — it comes from the per-variant condition phrase (composeCondition)
+// and the multi-pass composite.
+const SCENE_PREFIX = [
   'equirectangular 360 panorama, flat horizontal panoramic strip, perfectly level straight horizon, ultra wide aspect ratio',
-  'one continuous natural landscape whose vegetation, dryness, greenery and snow vary smoothly from left to right exactly as in the underlying composition',
-  'keep the existing color and seasonal layout, the far-left and far-right edges match for a seamless wrap',
+  'one continuous natural landscape, seamless left-right wrap',
 ].join(', ');
+
+const QUALITY = 'photorealistic, natural light, professional nature photography, National Geographic style, sharp focus, 8k';
+
+// Fixed seed so the base scene and all seasonal variants share the SAME terrain,
+// letting them composite/blend cleanly (same hill at column x, different season).
+const FORGE_SEED       = Number(process.env.FORGE_SEED ?? 12345);
+// How many data-placed seasonal variants to render and blend across the year.
+const SEASON_VARIANTS  = Number(process.env.SEASON_VARIANTS ?? 4);
+// img2img strength for the variants: high enough to swap surface features
+// (green↔dead↔snow), low enough to keep the base terrain structure.
+const VARIANT_DENOISE  = Number(process.env.VARIANT_DENOISE ?? 0.58);
 
 // Dedupe concurrent requests for the same key so we never run Forge twice.
 const inFlight = new Map();
@@ -184,23 +168,25 @@ function sanitizeKey(key) {
   return k || 'location';
 }
 
-/** Ask the local LLM to compose a Stable Diffusion prompt from location facts. */
-async function composePrompt(facts) {
+/**
+ * Ask the local LLM for a season-agnostic description of the location's VARIED
+ * natural landscape — distinct landforms, several kinds of native vegetation,
+ * and wildlife — so the base scene is interesting and place-specific rather than
+ * a monotonous field. Seasonal state is added separately per variant. Returns
+ * just the descriptive body (no framing/quality keywords).
+ */
+async function composeScene(facts) {
   const f = facts || {};
-  // The server prepends a fixed panorama/seasonal-layout prefix (PANORAMA_PREFIX);
-  // the LLM only writes the ecology BODY so it can concentrate on place-specific
-  // terrain, vegetation and wildlife without having to reproduce the framing.
   const instruction = [
     'You write the descriptive body of a prompt for a text-to-image model (Stable Diffusion).',
-    'The image is a FLAT horizontal panorama of ONE place across its year. The seasonal layout,',
-    'colors and flat framing are supplied separately by an underlying image — describe only the',
-    'natural ecology (terrain, native plants, wildlife) that fills the scene.',
-    'Produce ONE vivid, comma-separated fragment (max ~50 words) naming the characteristic terrain,',
-    'native vegetation, and one or two representative wild animals of this specific region.',
-    'Do NOT impose a generic season order and do NOT name seasons — this place may green up or dry',
-    'out at unusual times, and that is already set by the underlying colors. Do NOT write the words',
-    '"tiny planet", "globe", "sphere", "fisheye", "panorama", or "curved". No people, no buildings,',
-    'no text. Output ONLY the fragment, nothing else.',
+    'Describe the VARIED natural landscape of one specific place: its distinctive landforms (e.g.',
+    'rolling hills, rocky outcrops, a creek or pond, scattered groves, ridgelines), SEVERAL kinds of',
+    'native vegetation (not just grass — name trees, shrubs, and ground cover typical of the region),',
+    'and one or two representative wild animals. Make it visually varied and specific to this place.',
+    'Produce ONE comma-separated fragment (max ~55 words). Do NOT mention seasons, weather, color,',
+    'snow, or time of year — those are added separately. Do NOT write "tiny planet", "globe",',
+    '"sphere", "fisheye", "panorama", or "curved". No people, no buildings, no text.',
+    'Output ONLY the fragment, nothing else.',
     '',
     'Location facts:',
     `- Place: ${f.name ?? 'unknown'}`,
@@ -215,30 +201,47 @@ async function composePrompt(facts) {
     const res = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // keep_alive: 0 unloads the LLM from RAM immediately after it answers, so
-      // its memory is freed before Forge loads its (much larger) model. On 8 GB
-      // the two cannot co-reside without thrashing.
+      // keep_alive: 0 frees the LLM's RAM before Forge loads its larger model.
       body: JSON.stringify({ model: OLLAMA_MODEL, prompt: instruction, stream: false, keep_alive: 0, options: { temperature: 0.7 } }),
     });
     if (!res.ok) throw new Error(`Ollama ${res.status}`);
     const json = await res.json();
     let body = String(json.response || '').trim().replace(/^["']|["']$/g, '');
-    // Strip any framing words the LLM slipped in so they don't fight the flat
-    // panorama we need as the warp source.
     body = body.replace(/\b(tiny planet|little planet|stereographic|fisheye|panoramas?|equirectangular|globe|sphere|curved)\b/gi, '')
                .replace(/\s*,\s*,+/g, ', ').replace(/^[,\s]+/, '').trim();
-    if (body) return `${PANORAMA_PREFIX}, ${body}, photorealistic, natural light, professional nature photography, National Geographic style, sharp focus, 8k`;
+    if (body) return body;
   } catch (e) {
-    console.warn('[image-server] Ollama prompt failed, using fallback:', e.message);
+    console.warn('[image-server] Ollama scene failed, using fallback:', e.message);
   }
-  // Fallback prompt if the LLM is unavailable.
-  return [
-    PANORAMA_PREFIX,
-    `${f.biome ?? 'temperate'} landscape near ${f.name ?? 'a natural region'}`,
-    'native vegetation bare and snowy in winter, flowering in spring, lush green in summer, gold in autumn',
-    'native wildlife, golden hour',
-    'photorealistic, professional nature photography, National Geographic style, sharp focus, 8k',
-  ].join(', ');
+  return `${f.biome ?? 'temperate'} landscape near ${f.name ?? 'a natural region'}, rolling terrain, scattered native trees and shrubs, ground cover, native wildlife`;
+}
+
+/**
+ * Turn one band's REAL conditions into feature+color words for img2img — this is
+ * where a season actually changes what's on the ground, not just its tint. Driven
+ * by data thresholds (vegetation, warmth, wetness, snow/cold), so a place reads
+ * dead and dry when its data says so, lush when wet, snowy only when it snows.
+ */
+function composeCondition(c, hasSnow) {
+  const snowy = hasSnow ? clamp01(c.snow) : 0;
+  const parts = [];
+  if (snowy > 0.45) {
+    parts.push('deep fresh snow covering the ground, snow-laden bare branches, frozen, white winter landscape');
+  } else {
+    if (snowy > 0.12) parts.push('patchy snow on the ground, frost, bare branches');
+    if (c.veg > 0.62) {
+      parts.push('lush vivid green vegetation, dense fresh foliage, vibrant new growth, wildflowers in bloom, verdant and alive');
+    } else if (c.veg > 0.4) {
+      parts.push('green and tan mixed vegetation, healthy foliage, some flowering plants');
+    } else if (c.warm > 0.5) {
+      parts.push('dead dry dormant grass, parched cracked bare earth, withered brown and golden stalks, sun-scorched and lifeless, sparse dry brush');
+    } else {
+      parts.push('dormant muted brown vegetation, bare twigs, faded dry ground cover, leafless');
+    }
+    if (c.wet > 0.55 && snowy < 0.12) parts.push('damp ground, full creek');
+    else if (c.wet < 0.2 && c.warm > 0.5) parts.push('dusty, drought-stricken');
+  }
+  return parts.join(', ');
 }
 
 /** Is Forge up and serving its API? */
@@ -301,22 +304,21 @@ function scheduleForgeShutdown() {
   forgeIdleTimer.unref?.(); // don't keep the event loop alive just for this
 }
 
-/** Run Forge txt2img; returns a PNG Buffer. */
-async function forgeTxt2img(prompt) {
+/** Run Forge txt2img; returns a PNG Buffer. Shared seed keeps terrain stable. */
+async function forgeTxt2img(prompt, { seed = FORGE_SEED, steps = 25 } = {}) {
   const res = await fetch(`${FORGE_URL}/sdapi/v1/txt2img`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
       negative_prompt: NEGATIVE_PROMPT,
-      steps: 25,
-      // 2:1 equirectangular strip — the client warps it into a little planet,
-      // and its width carries the seasonal cycle.
-      width: 1024,
+      seed,
+      steps,
+      width: 1024,   // 2:1 equirectangular strip the client warps into a planet
       height: 512,
       cfg_scale: 7,
       sampler_name: 'DPM++ 2M Karras',
-      tiling: true, // seamless horizontal wrap (see forgeImg2img)
+      tiling: true,  // seamless horizontal wrap
     }),
   });
   if (!res.ok) throw new Error(`Forge ${res.status} ${res.statusText}`);
@@ -325,24 +327,22 @@ async function forgeTxt2img(prompt) {
   return Buffer.from(json.images[0], 'base64');
 }
 
-/** Run Forge img2img over the data-driven seasonal init; returns a PNG Buffer. */
-async function forgeImg2img(prompt, initPng) {
+/** Run Forge img2img over a base PNG; returns a PNG Buffer. */
+async function forgeImg2img(prompt, initPng, { seed = FORGE_SEED, denoise = VARIANT_DENOISE, steps = 24 } = {}) {
   const res = await fetch(`${FORGE_URL}/sdapi/v1/img2img`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       init_images: [initPng.toString('base64')],
-      denoising_strength: IMG2IMG_DENOISE,
+      denoising_strength: denoise,
       prompt,
       negative_prompt: NEGATIVE_PROMPT,
-      steps: 28,
+      seed,
+      steps,
       width: 1024,
       height: 512,
       cfg_scale: 7,
       sampler_name: 'DPM++ 2M Karras',
-      // Seamless horizontal wrap so the warp's left/right edges meet without a
-      // radial seam. Vertical tiling is harmless here — top(sky)/bottom(ground)
-      // map to the planet's rim and centre and never touch.
       tiling: true,
     }),
   });
@@ -352,9 +352,61 @@ async function forgeImg2img(prompt, initPng) {
   return Buffer.from(json.images[0], 'base64');
 }
 
-/** True when we have the 12-band monthly data needed for the data-driven init. */
+/** True when we have the 12-band monthly data needed for the seasonal composite. */
 function hasMonthly(facts) {
   return Array.isArray(facts?.monthly) && facts.monthly.length === 12;
+}
+
+const smoothstep = t => t * t * (3 - 2 * t);
+
+/**
+ * Composite N seasonal variants (each a decoded full-width panorama of the SAME
+ * terrain in a different seasonal state) into one strip whose WIDTH is the year.
+ * Column x (year fraction x/W) is taken from variant column x, cross-faded between
+ * the two variants whose phases bracket that fraction. Variant 0 sits at the
+ * winter-solstice seam (x=0 and x=W), so the wrap stays seamless.
+ */
+function compositeSeasonalStrip(variants) {
+  const N = variants.length;
+  const W = variants[0].w, H = variants[0].h;
+  const out = Buffer.alloc(W * H * 4);
+  for (let x = 0; x < W; x++) {
+    const s = (x / W) * N;          // phase position along the year
+    const i = Math.floor(s) % N;
+    const j = (i + 1) % N;
+    const t = smoothstep(s - Math.floor(s));
+    const A = variants[i].data, B = variants[j].data;
+    for (let y = 0; y < H; y++) {
+      const p = (y * W + x) * 4;
+      out[p]     = A[p]     + (B[p]     - A[p])     * t;
+      out[p + 1] = A[p + 1] + (B[p + 1] - A[p + 1]) * t;
+      out[p + 2] = A[p + 2] + (B[p + 2] - A[p + 2]) * t;
+      out[p + 3] = 255;
+    }
+  }
+  return encodePNG(W, H, out);
+}
+
+/**
+ * Multi-pass seasonal render: one varied base scene, then SEASON_VARIANTS img2img
+ * passes that re-skin the SAME terrain into each data-placed season (features +
+ * color from composeCondition), composited across the year. Returns a PNG Buffer.
+ */
+async function renderSeasonalComposite(scene, monthly, debug) {
+  const hasSnow = locationHasSnow(monthly);
+  const base = await forgeTxt2img(`${SCENE_PREFIX}, ${scene}, soft overcast daylight, ${QUALITY}`);
+  if (debug) debug.base = base;
+
+  const variants = [];
+  for (let i = 0; i < SEASON_VARIANTS; i++) {
+    const band = sampleMonthly(monthly, i / SEASON_VARIANTS);
+    const cond = composeCondition(band, hasSnow);
+    const prompt = `${SCENE_PREFIX}, ${scene}, ${cond}, ${QUALITY}`;
+    const png = await forgeImg2img(prompt, base);
+    variants.push(decodePNG(png));
+    if (debug) (debug.variants ??= []).push({ png, prompt });
+  }
+  return compositeSeasonalStrip(variants);
 }
 
 async function generate(key, facts, force) {
@@ -369,20 +421,19 @@ async function generate(key, facts, force) {
   if (inFlight.has(key)) return inFlight.get(key);
 
   const work = (async () => {
-    const prompt = await composePrompt(facts);
+    const scene = await composeScene(facts);
     await ensureForge();
-    // Preferred path: paint photographic landscape over the data-driven seasonal
-    // init so the local seasonal layout tracks real temp/rain/vegetation. Fall
-    // back to plain txt2img when monthly data is absent (e.g. sparse presets).
-    let png;
+    await fs.mkdir(CACHE_DIR, { recursive: true });
+    // Preferred path: a varied base scene re-skinned into each real season and
+    // composited across the year. Fall back to a single txt2img when monthly
+    // data is absent (e.g. sparse presets).
+    let png, prompt;
     if (hasMonthly(facts)) {
-      const init = buildSeasonalInitPNG(facts.monthly);
-      png = await forgeImg2img(prompt, init);
-      await fs.mkdir(CACHE_DIR, { recursive: true });
-      await fs.writeFile(path.join(CACHE_DIR, `${key}.init.png`), init); // keep for debugging
+      png = await renderSeasonalComposite(scene, facts.monthly);
+      prompt = `${SCENE_PREFIX}, ${scene}, [+${SEASON_VARIANTS} data-driven seasonal variants], ${QUALITY}`;
     } else {
+      prompt = `${SCENE_PREFIX}, ${scene}, ${QUALITY}`;
       png = await forgeTxt2img(prompt);
-      await fs.mkdir(CACHE_DIR, { recursive: true });
     }
     await fs.writeFile(pngPath, png);
     await fs.writeFile(promptPath, prompt);
