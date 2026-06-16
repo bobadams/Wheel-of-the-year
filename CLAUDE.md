@@ -199,18 +199,17 @@ python_cmd="python3.10"
 - `--upcast-sampling` — additional precision fix for MPS
 - `PYTORCH_ENABLE_MPS_FALLBACK=1` — allows unsupported MPS ops to fall back to CPU
 
-### nginx proxy
-`/forge-api/` on the server proxies to `http://localhost:7860/`. This is how the deployed web app at `slamad.ong/wheel/` reaches Forge:
+### Forge is not reached from the browser
+Forge (`127.0.0.1:7860`) and Ollama (`127.0.0.1:11434`) are **localhost-only** and
+are reached **server-side** by the image service — never from the browser. There
+is intentionally **no public nginx proxy** to either one.
 
-```nginx
-location /forge-api/ {
-    proxy_pass http://127.0.0.1:7860/;
-    proxy_http_version 1.1;
-    proxy_set_header Host localhost;
-    proxy_read_timeout 300s;
-    proxy_buffering off;
-}
-```
+> Security note: earlier configs exposed `/forge-api/` → Forge and `/api/ollama/`
+> → Ollama publicly (no auth, no rate limit), which let anyone on the internet run
+> inference / image generation on the Mac mini and enumerate models. Both proxy
+> blocks were **removed**. Do **not** re-add a public proxy to Forge or Ollama.
+> The browser only needs `/wheel-images/` (the image service), which is itself
+> now rate-limited (`limit_req zone=ai burst=5`).
 
 ### Image fetch module
 `src/fetch/image.js` — exports `fetchWheelImage(data, { force })` plus the helpers
