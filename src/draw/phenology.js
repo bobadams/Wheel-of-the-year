@@ -96,26 +96,50 @@ export function drawPhenology() {
     ctx.restore();
   }
 
-  // Draw labels centered on each arc, just outside the stroke.
+  // Draw labels curved along each arc, centered on the arc midpoint and sitting
+  // just outside the stroke so the text runs parallel to (and bends with) the line.
   for (const it of items) {
     const color = TYPE_COLORS[it.event_type] || TYPE_COLORS.other;
-    const a = doy2angle(it.center + 0.5);
-    const [lx, ly] = polar(CX, CY, a, it.r + ARC_W / 2 + FONT_SIZE * 0.7);
-    // Keep text upright (never upside-down) regardless of wheel position.
-    let textAngle = a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
-    if (textAngle >= Math.PI / 2)  textAngle -= Math.PI;
-    if (textAngle <  -Math.PI / 2) textAngle += Math.PI;
+    const aCenter = doy2angle(it.center + 0.5);
+    const rText = it.r + ARC_W / 2 + FONT_SIZE * 0.7;
     ctx.save();
     ctx.globalAlpha  = it.verified === false ? 0.6 : 0.82;
     ctx.fillStyle    = color;
     ctx.font         = `${FONT_SIZE}px 'Crimson Pro',serif`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.translate(lx, ly);
-    ctx.rotate(textAngle);
-    ctx.fillText(it.text, 0, 0);
+    drawArcText(ctx, CX, CY, it.text, aCenter, rText);
     ctx.restore();
   }
 
   ctx.restore();
+}
+
+/**
+ * Render `text` along a circular arc of radius `r`, centered (tangentially) on
+ * the angle `aCenter`. Each glyph is rotated to the local tangent so the whole
+ * label bends with the arc. On the lower half of the wheel the text is flipped
+ * so it stays upright (read left-to-right) rather than upside-down.
+ */
+function drawArcText(ctx, cx, cy, text, aCenter, r) {
+  const chars  = [...text];
+  const widths = chars.map(c => ctx.measureText(c).width);
+  const total  = widths.reduce((s, w) => s + w, 0);
+  // Flip when the label sits on the bottom of the wheel (canvas y grows down).
+  const flip = Math.sin(aCenter) > 0;
+  const dir  = flip ? -1 : 1;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Walk from the leading edge of the label to its trailing edge.
+  let a = aCenter - dir * (total / r) / 2;
+  for (let i = 0; i < chars.length; i++) {
+    const charAngle = widths[i] / r;
+    const aMid = a + dir * charAngle / 2;
+    const [x, y] = polar(cx, cy, aMid, r);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(aMid + (flip ? -Math.PI / 2 : Math.PI / 2));
+    ctx.fillText(chars[i], 0, 0);
+    ctx.restore();
+    a += dir * charAngle;
+  }
 }
