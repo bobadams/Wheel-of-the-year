@@ -84,14 +84,27 @@ npm run generate-presets  # Regenerate Oakland preset from live APIs (Node.js)
 `vite.config.js` sets `base: '/wheel/'` so all assets are served from the correct subpath. Do not change this without updating the nginx config to match.
 
 ### Deploying updates
-```bash
-# 1. Push changes to GitHub locally
-git push
 
-# 2. Pull and rebuild on the Mac mini
-ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && cd ~/Sites/wheel-of-the-year && git pull && npm run build"
+> **The Mac mini is the canonical source.** All edits are made directly in
+> `~/Sites/wheel-of-the-year/` on the Mac mini. Git is used as a **backup /
+> history**, not as the deploy mechanism — changes are *not* edited locally and
+> pushed down. Do not `git pull` into the server's working tree; that would
+> overwrite the live edits. (This is deliberate for this project, not standard
+> practice.)
+
+```bash
+# 1. Edit files and rebuild, all on the Mac mini
+ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && cd ~/Sites/wheel-of-the-year && npm run build"
+
+# 2. Commit and push from the server as a backup
+ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && cd ~/Sites/wheel-of-the-year && git add -A && git commit -m '...' && git push"
 ```
 nginx serves the built `dist/` directory directly — no process restart needed after a rebuild.
+
+> **Any other clone (e.g. a laptop checkout) is read-only / reference.** If you
+> edit elsewhere, you must `git pull` *from* the server's history first and
+> reconcile by hand — the server never pulls from you. Prefer editing on the
+> Mac mini directly to avoid divergence.
 
 ### nginx location block (for reference)
 ```nginx
