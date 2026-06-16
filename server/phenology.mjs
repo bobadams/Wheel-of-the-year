@@ -150,18 +150,23 @@ function normMonths(m) {
 
 /**
  * Resolve a taxon name to an iNaturalist taxon id, or null. When `iconic` is
- * given (e.g. 'Aves'), the search is constrained to that iconic taxon so a name
- * can't resolve into the wrong group.
+ * given (e.g. 'Aves'), the result is constrained to that iconic group so a name
+ * can't resolve into the wrong category (e.g. a "Monarch" butterfly proposed
+ * under mammals). The /taxa autocomplete endpoint ignores its own iconic_taxa
+ * filter, so we check each candidate's iconic_taxon_name ourselves and take the
+ * first that matches — returning null (dropping the event) when none do.
  */
 async function resolveTaxon(taxon, iconic) {
   try {
-    let u = `${INAT}/taxa?q=${encodeURIComponent(taxon)}&per_page=1`;
-    if (iconic) u += `&iconic_taxa=${encodeURIComponent(iconic)}`;
-    const res = await fetch(u,
+    const res = await fetch(`${INAT}/taxa?q=${encodeURIComponent(taxon)}&per_page=5`,
       { headers: { 'User-Agent': 'wheel-of-the-year/1.0' }, signal: AbortSignal.timeout(15000) });
     if (!res.ok) return null;
     const json = await res.json();
-    return json.results?.[0]?.id ?? null;
+    const results = json.results || [];
+    const match = iconic
+      ? results.find(r => r.iconic_taxon_name === iconic)
+      : results[0];
+    return match?.id ?? null;
   } catch { return null; }
 }
 
