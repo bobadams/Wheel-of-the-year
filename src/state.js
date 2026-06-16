@@ -12,7 +12,7 @@ RING_DEFS.forEach(r => {
 });
 
 // Global display toggles
-export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true };
+export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true, phenology: true };
 
 function precomputeSmoothed(data) {
   const out = {};
@@ -43,6 +43,11 @@ export let todayDOY = null;
 
 export function setActuals(a) { actuals = a; }
 export function setTodayDOY(d) { todayDOY = d; }
+
+// Phenology band — characteristic seasonal wildlife/bloom events for the current
+// location, each { label, startDOY, peakDOY, endDOY, event_type, source, verified }.
+export let phenologyEvents = [];
+export function setPhenologyEvents(e) { phenologyEvents = Array.isArray(e) ? e : []; }
 
 // Canvas dimensions (set during init, updated on resize)
 // svgExport: true while exportSVG() is running — draw code uses this to skip

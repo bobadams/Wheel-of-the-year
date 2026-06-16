@@ -24,6 +24,7 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
+import { handlePhenology } from './phenology.mjs';
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
 const HOME        = process.env.HOME ?? '/Users/bradfordadams';
@@ -419,6 +420,22 @@ const server = http.createServer(async (req, res) => {
       res.end(png);
     } catch (e) {
       console.error('[image-server] /generate failed:', e.message);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/phenology') {
+    try {
+      const { key, facts, force } = JSON.parse(await readBody(req) || '{}');
+      const result = await handlePhenology(sanitizeKey(key), facts, {
+        force: !!force, cacheDir: CACHE_DIR, ollamaUrl: OLLAMA_URL, model: OLLAMA_MODEL,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+      res.end(JSON.stringify(result));
+    } catch (e) {
+      console.error('[image-server] /phenology failed:', e.message);
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));
     }
