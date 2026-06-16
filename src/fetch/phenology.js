@@ -58,16 +58,19 @@ function buildPhenologyFacts(data) {
 }
 
 /**
- * Fetch (or generate) the cached phenology events for the current location.
- * Returns an array of event records:
- *   { label, startDOY, peakDOY, endDOY, event_type, source, verified, obs_total }
- * Resolves to [] on any service error so callers can fail silently.
+ * Fetch (or generate) the phenology events for the current location. The service
+ * streams newline-delimited JSON — one line per animal/plant category as it
+ * becomes ready — so results can render progressively. Each event record is:
+ *   { label, startDOY, peakDOY, endDOY, event_type, category, source, verified, obs_total }
+ * Resolves to the full accumulated array; rejects on a non-OK response so callers
+ * can fail silently.
  *
- * @param {object}  data         currentData (needs name/lat/lon plus temp/rain/evi for the biome)
- * @param {object}  opts
- * @param {boolean} opts.force   bypass the server cache and regenerate
+ * @param {object}   data            currentData (needs name/lat/lon plus temp/rain/evi for the biome)
+ * @param {object}   opts
+ * @param {boolean}  opts.force      bypass the server cache and regenerate
+ * @param {function} opts.onCategory (category, events) called as each category lands
  */
-export async function fetchPhenology(data, { force = false } = {}) {
+export async function fetchPhenology(data, { force = false, onCategory } = {}) {
   const key   = locationKey(data);
   const facts = buildPhenologyFacts(data);
 
@@ -78,6 +81,38 @@ export async function fetchPhenology(data, { force = false } = {}) {
   });
   if (!response.ok) throw new Error(`Phenology service error: ${response.status}`);
 
-  const result = await response.json();
-  return Array.isArray(result.events) ? result.events : [];
+  const all = [];
+  const handleLine = line => {
+    line = line.trim();
+    if (!line) return;
+    let msg;
+    try { msg = JSON.parse(line); } catch { return; }
+    const events = Array.isArray(msg.events) ? msg.events : [];
+    all.push(...events);
+    if (onCategory) onCategory(msg.category, events);
+  };
+
+  // Prefer the streaming reader so each category renders as it arrives; fall back
+  // to a buffered read where ReadableStream isn't available.
+  if (response.body && response.body.getReader) {
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        handleLine(buf.slice(0, nl));
+        buf = buf.slice(nl + 1);
+      }
+    }
+    buf += decoder.decode();
+    handleLine(buf);
+  } else {
+    const text = await response.text();
+    for (const line of text.split('\n')) handleLine(line);
+  }
+  return all;
 }

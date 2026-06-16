@@ -5,19 +5,22 @@
 // with a date window. Imported by server/image-server.mjs and exposed at
 // POST /wheel-images/phenology.
 //
-// Pipeline (Design B — see plan):
-//   1. Ask the local LLM (Ollama) to PROPOSE 6-10 characteristic events for the
-//      location, each with a taxon to search and a fallback month range.
-//   2. ANCHOR each event's timing against iNaturalist observation histograms,
-//      geofiltered to the location. Blooms use the flowering phenology
-//      annotation; presence-based events use the raw histogram. Where iNaturalist
-//      coverage is good, the data sets the dates (source:'inat', verified). Where
-//      it is thin (unresolved taxon / too few records), fall back to the LLM's
-//      proposed range (source:'llm', verified:false → shown with a '*').
-//   3. RECONCILE labels: feed each data-anchored event's observed peak back to the
-//      LLM so it can confirm the proposed label or relabel it to the activity
-//      actually happening then (e.g. elephant-seal "calving" → "juvenile haul-out"
-//      when observations peak in April, not the Dec-Feb calving the LLM guessed).
+// Pipeline (per category — mammals, fish, birds, insects, plants — handled
+// separately and streamed to the client as each finishes):
+//   1. Ask the local LLM (Ollama), for ONE category at a time, to PROPOSE up to 3
+//      characteristic events for the location, each with a taxon to search and a
+//      fallback month range.
+//   2. CONFIRM each event against iNaturalist observation histograms, geofiltered
+//      to the location and constrained to the category's iconic taxon. Blooms use
+//      the flowering phenology annotation; presence-based events use the raw
+//      histogram. An event is KEPT only when iNaturalist has enough nearby records
+//      AND they show a clear seasonal peak — that observed window sets its dates
+//      (source:'inat', verified). Events that don't resolve, are too sparse, or
+//      show no real season are DROPPED (we keep only what the data confirms).
+//   3. RECONCILE labels: feed each confirmed event's observed peak back to the LLM
+//      so it can confirm the proposed label or relabel it to the activity actually
+//      happening then (e.g. elephant-seal "calving" → "juvenile haul-out" when
+//      observations peak in April, not the Dec-Feb calving the LLM guessed).
 //
 // Results are disk-cached per location key, so each location generates once.
 //
@@ -34,6 +37,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const MONTH_START = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
 const MONTH_NAME  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const VALID_TYPES = ['bloom', 'migration', 'arrival', 'emergence', 'breeding', 'other'];
+
+// Animal/plant categories, each queried separately and confirmed against its
+// iNaturalist iconic taxon so a proposed name can't drift into the wrong kingdom
+// (a plant name resolving to an animal, etc.). Array order = the order categories
+// are computed and streamed to the client.
+const CATEGORIES = [
+  { id: 'mammals', label: 'mammals', noun: 'animal', iconic: 'Mammalia' },
+  { id: 'fish',    label: 'fish',    noun: 'animal', iconic: 'Actinopterygii' },
+  { id: 'birds',   label: 'birds',   noun: 'animal', iconic: 'Aves' },
+  { id: 'insects', label: 'insects', noun: 'animal', iconic: 'Insecta' },
+  { id: 'plants',  label: 'plants',  noun: 'plant',  iconic: 'Plantae' },
+];
+
+// Minimum nearby iNaturalist records for an event to count as confirmed.
+const MIN_OBS = 50;
 
 /** Trim a label to <= max chars on a word boundary (no mid-word cuts). */
 function trimLabel(s, max = 32) {
@@ -70,21 +88,24 @@ async function ollamaJSON(prompt, { ollamaUrl, model, temperature = 0.6 }) {
 
 // ── Step 1: propose ─────────────────────────────────────────────────────────
 
-async function proposeEvents(facts, llm) {
+async function proposeCategory(cat, facts, llm) {
   const f = facts || {};
   const coastal = f.coastal ? 'yes (near the coast)' : 'unknown';
+  const examples = cat.id === 'plants'
+    ? 'major flower blooms, leaf-out, fall color, fruiting'
+    : 'migrations, arrivals, breeding or birthing, emergences, spawning runs';
   const prompt = [
-    'You are a field naturalist. List the 6 to 10 MOST CHARACTERISTIC, iconic',
-    'seasonal wildlife and plant events for the ecosystem around one specific',
-    'location — the events that define the living year there: major flower blooms,',
-    'bird and insect migrations and arrivals, animal breeding or birthing, insect',
-    'emergences. Prefer locally famous, recognizable, place-defining events. Avoid',
-    'generic ones that occur everywhere.',
+    `You are a field naturalist. List up to THREE of the MOST CHARACTERISTIC,`,
+    `iconic seasonal ${cat.label} events for the ecosystem around one specific`,
+    `location — the ${cat.label} events that define the living year there`,
+    `(${examples}). Prefer locally famous, recognizable, place-defining events.`,
+    'Avoid generic ones that occur everywhere. List only real, well-known events;',
+    `if fewer than three notable ${cat.label} events apply here, list fewer.`,
     '',
     'For each event provide:',
     '- common_name: short event name, e.g. "California poppy bloom"',
-    '- taxon: the species or genus to search, common or scientific name, e.g.',
-    '  "Eschscholzia californica" or "Monarch"',
+    `- taxon: the ${cat.noun} species or genus to search, common or scientific`,
+    '  name, e.g. "Eschscholzia californica" or "Monarch"',
     '- event_type: one of bloom, migration, arrival, emergence, breeding, other',
     '- expected_months: [startMonth, endMonth], integers 1-12, when you expect it',
     '',
@@ -110,7 +131,7 @@ async function proposeEvents(facts, llm) {
           expected_months: normMonths(e.expected_months),
         }))
         .filter(e => e.common_name && e.taxon)
-        .slice(0, 10);
+        .slice(0, 3);
     }
   }
   return [];
@@ -127,10 +148,16 @@ function normMonths(m) {
 
 // ── Step 2: anchor against iNaturalist ────────────────────────────────────────
 
-/** Resolve a taxon name to an iNaturalist taxon id, or null. */
-async function resolveTaxon(taxon) {
+/**
+ * Resolve a taxon name to an iNaturalist taxon id, or null. When `iconic` is
+ * given (e.g. 'Aves'), the search is constrained to that iconic taxon so a name
+ * can't resolve into the wrong group.
+ */
+async function resolveTaxon(taxon, iconic) {
   try {
-    const res = await fetch(`${INAT}/taxa?q=${encodeURIComponent(taxon)}&per_page=1`,
+    let u = `${INAT}/taxa?q=${encodeURIComponent(taxon)}&per_page=1`;
+    if (iconic) u += `&iconic_taxa=${encodeURIComponent(iconic)}`;
+    const res = await fetch(u,
       { headers: { 'User-Agent': 'wheel-of-the-year/1.0' }, signal: AbortSignal.timeout(15000) });
     if (!res.ok) return null;
     const json = await res.json();
@@ -193,42 +220,18 @@ function peakWindow(counts) {
 const MAX_SEASON_WEEKS = 28;
 
 const weekToDOY  = w => (((w - 1) * 7) % 365 + 365) % 365;
-const monthToDOY = m => MONTH_START[((m - 1) % 12 + 12) % 12];
 const doyToMonth = d => { let m = 0; for (let i = 0; i < 12; i++) if (d >= MONTH_START[i]) m = i; return m; }; // 0-based
 
-/** Mid-DOY of a window [start,end] on the 365-day circle. */
-function midDOY(start, end) {
-  let span = (end - start + 365) % 365;
-  return (start + span / 2) % 365;
-}
-
-/** Build the DOY window for an LLM fallback month range. */
-function monthRangeWindow([m1, m2]) {
-  const startDOY = monthToDOY(m1);
-  const endMonth0 = (m2 - 1) % 12;
-  const endDOY = endMonth0 === 11 ? 364 : MONTH_START[endMonth0 + 1] - 1;
-  return { startDOY, endDOY, peakDOY: midDOY(startDOY, endDOY) };
-}
-
 /**
- * Anchor one proposed event. Returns an event record with timing from
- * iNaturalist (source:'inat') when coverage is good, else from the LLM's
- * proposed range (source:'llm', verified:false). Returns null only when neither
- * source yields a usable window.
+ * Confirm one proposed event against iNaturalist. Returns a data-anchored event
+ * record (source:'inat', verified) only when the species resolves, has enough
+ * nearby records, and those records show a clear seasonal peak — that observed
+ * window sets the dates. Returns null when the data can't confirm the event
+ * (unresolved taxon, too sparse, or no real season); such events are dropped.
  */
-async function anchorEvent(ev, lat, lon) {
-  const fallback = () => {
-    if (!ev.expected_months) return null;
-    const w = monthRangeWindow(ev.expected_months);
-    return {
-      label: ev.common_name, taxon_id: null, event_type: ev.event_type,
-      source: 'llm', verified: false, obs_total: 0,
-      ...w, common_name: ev.common_name, expected_months: ev.expected_months,
-    };
-  };
-
-  const taxonId = await resolveTaxon(ev.taxon);
-  if (!taxonId) return fallback();
+async function anchorEvent(ev, lat, lon, cat) {
+  const taxonId = await resolveTaxon(ev.taxon, cat.iconic);
+  if (!taxonId) return null;
 
   let counts = await fetchHistogram(taxonId, lat, lon, { flowering: ev.event_type === 'bloom' });
   // Flowering annotation can be sparse even where raw obs are plentiful — retry raw.
@@ -236,14 +239,14 @@ async function anchorEvent(ev, lat, lon) {
     counts = await fetchHistogram(taxonId, lat, lon);
   }
   const total = counts ? sum(counts) : 0;
-  if (total < 50) { const fb = fallback(); if (fb) fb.taxon_id = taxonId; return fb; }
+  if (total < MIN_OBS) return null; // too few nearby records → unconfirmed
 
   const { startWeek, peakWeek, endWeek, widthWeeks } = peakWindow(counts);
-  // Year-round resident with no real season → don't fake a peak; use LLM range.
-  if (widthWeeks > MAX_SEASON_WEEKS) { const fb = fallback(); if (fb) fb.taxon_id = taxonId; return fb; }
+  // Year-round resident with no real season → no clear signal to confirm.
+  if (widthWeeks > MAX_SEASON_WEEKS) return null;
   const startDOY = weekToDOY(startWeek), peakDOY = weekToDOY(peakWeek), endDOY = weekToDOY(endWeek);
   return {
-    label: ev.common_name, taxon_id: taxonId, event_type: ev.event_type,
+    label: ev.common_name, taxon_id: taxonId, event_type: ev.event_type, category: cat.id,
     source: 'inat', verified: true, obs_total: total,
     startDOY, peakDOY, endDOY, common_name: ev.common_name, expected_months: ev.expected_months,
     observed_peak_month: doyToMonth(peakDOY) + 1,
@@ -303,46 +306,81 @@ async function reconcileLabels(inatEvents, llm) {
 
 // ── Orchestration + cache ─────────────────────────────────────────────────────
 
-async function build(key, facts, force, opts) {
+/** Propose → confirm → reconcile one category, returning its kept events. */
+async function buildCategory(cat, facts, lat, lon, llm) {
+  const proposed = await proposeCategory(cat, facts, llm);
+  const anchored = [];
+  for (const ev of proposed) {
+    const a = await anchorEvent(ev, lat, lon, cat);
+    if (a) anchored.push(a);
+    await sleep(700); // be polite to iNaturalist (~60 req/min)
+  }
+
+  await reconcileLabels(anchored, llm);
+
+  const events = anchored.map(e => ({
+    label: trimLabel(e.label),
+    startDOY: Math.round(e.startDOY),
+    peakDOY: Math.round(e.peakDOY),
+    endDOY: Math.round(e.endDOY),
+    event_type: e.event_type,
+    category: e.category,
+    source: e.source,
+    verified: e.verified,
+    obs_total: e.obs_total,
+    taxon_id: e.taxon_id,
+  }));
+  return { events, proposed, anchored };
+}
+
+/** Group already-built events by category and replay them through `emit`. */
+function streamByCategory(events, emit) {
+  if (!emit) return;
+  for (const cat of CATEGORIES) {
+    emit(cat.id, (events || []).filter(e => e.category === cat.id));
+  }
+}
+
+async function build(key, facts, force, opts, emit) {
   const { cacheDir } = opts;
   const jsonPath  = path.join(cacheDir, `${key}.phenology.json`);
   const debugPath = path.join(cacheDir, `${key}.phenology.debug.json`);
 
   if (!force) {
-    try { return JSON.parse(await fs.readFile(jsonPath, 'utf8')); } catch { /* miss */ }
+    try {
+      const cached = JSON.parse(await fs.readFile(jsonPath, 'utf8'));
+      streamByCategory(cached.events, emit); // replay the cache, category by category
+      return cached;
+    } catch { /* miss */ }
   }
-  if (inFlight.has(key)) return inFlight.get(key);
+
+  // Coalesce concurrent (re)generations: a second caller can't share the first's
+  // progressive stream, so it awaits the full result and emits it all at once.
+  if (inFlight.has(key)) {
+    const result = await inFlight.get(key);
+    streamByCategory(result.events, emit);
+    return result;
+  }
 
   const work = (async () => {
     const llm = { ollamaUrl: opts.ollamaUrl, model: opts.model };
     const lat = facts?.lat ?? 0, lon = facts?.lon ?? 0;
 
-    const proposed = await proposeEvents(facts, llm);
-    const anchored = [];
-    for (const ev of proposed) {
-      const a = await anchorEvent(ev, lat, lon);
-      if (a) anchored.push(a);
-      await sleep(700); // be polite to iNaturalist (~60 req/min)
+    const events = [];
+    const debug = { facts, categories: {} };
+    // Compute one category at a time and emit each the moment it is ready.
+    for (const cat of CATEGORIES) {
+      const built = await buildCategory(cat, facts, lat, lon, llm);
+      events.push(...built.events);
+      debug.categories[cat.id] = { proposed: built.proposed, anchored: built.anchored };
+      if (emit) emit(cat.id, built.events);
     }
 
-    await reconcileLabels(anchored.filter(e => e.source === 'inat'), llm);
-
-    const events = anchored.map(e => ({
-      label: trimLabel(e.label),
-      startDOY: Math.round(e.startDOY),
-      peakDOY: Math.round(e.peakDOY),
-      endDOY: Math.round(e.endDOY),
-      event_type: e.event_type,
-      source: e.source,
-      verified: e.verified,
-      obs_total: e.obs_total,
-      taxon_id: e.taxon_id,
-    }));
     const result = { key, generated_at: new Date().toISOString(), events };
 
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeFile(jsonPath, JSON.stringify(result, null, 2));
-    await fs.writeFile(debugPath, JSON.stringify({ facts, proposed, anchored }, null, 2));
+    await fs.writeFile(debugPath, JSON.stringify(debug, null, 2));
     return result;
   })();
 
@@ -353,12 +391,14 @@ async function build(key, facts, force, opts) {
 
 /**
  * Handle a /phenology request. `opts`: { force, cacheDir, ollamaUrl, model }.
- * Never throws on upstream failure — returns { events: [] } so the band degrades
- * gracefully like the other optional fetches.
+ * `emit(category, events)` is called once per category as it becomes ready (and
+ * is replayed from cache on a hit) so the caller can stream results to the
+ * client. Never throws on upstream failure — returns { events: [] } so the band
+ * degrades gracefully like the other optional fetches.
  */
-export async function handlePhenology(key, facts, opts) {
+export async function handlePhenology(key, facts, opts, emit) {
   try {
-    return await build(key, facts, !!opts.force, opts);
+    return await build(key, facts, !!opts.force, opts, emit);
   } catch (e) {
     console.error('[phenology] build failed:', e.message);
     return { key, generated_at: new Date().toISOString(), events: [] };

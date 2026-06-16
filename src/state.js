@@ -12,7 +12,7 @@ RING_DEFS.forEach(r => {
 });
 
 // Global display toggles
-export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true, phenology: true };
+export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true, phenology: true, phenoMammals: true, phenoFish: true, phenoBirds: true, phenoInsects: true, phenoPlants: true };
 
 function precomputeSmoothed(data) {
   const out = {};
@@ -45,9 +45,18 @@ export function setActuals(a) { actuals = a; }
 export function setTodayDOY(d) { todayDOY = d; }
 
 // Phenology band — characteristic seasonal wildlife/bloom events for the current
-// location, each { label, startDOY, peakDOY, endDOY, event_type, source, verified }.
+// location, each { label, startDOY, peakDOY, endDOY, event_type, category, source,
+// verified }. Events arrive one animal/plant category at a time (mammals, fish,
+// birds, insects, plants), each confirmed against iNaturalist observations.
 export let phenologyEvents = [];
 export function setPhenologyEvents(e) { phenologyEvents = Array.isArray(e) ? e : []; }
+// Replace just the events of one category, leaving the others in place — used to
+// render each category the moment it streams in from the phenology service.
+export function setPhenologyCategory(category, events) {
+  phenologyEvents = phenologyEvents
+    .filter(e => e.category !== category)
+    .concat(Array.isArray(events) ? events : []);
+}
 
 // Canvas dimensions (set during init, updated on resize)
 // svgExport: true while exportSVG() is running — draw code uses this to skip

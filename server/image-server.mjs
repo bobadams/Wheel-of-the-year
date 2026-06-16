@@ -429,15 +429,27 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/phenology') {
     try {
       const { key, facts, force } = JSON.parse(await readBody(req) || '{}');
-      const result = await handlePhenology(sanitizeKey(key), facts, {
-        force: !!force, cacheDir: CACHE_DIR, ollamaUrl: OLLAMA_URL, model: OLLAMA_MODEL,
+      // Stream newline-delimited JSON: one line per animal/plant category as it
+      // becomes ready, so the client can render each the moment it lands. The
+      // 'X-Accel-Buffering: no' header (and nginx's `proxy_buffering off` for
+      // /wheel-images/) keeps the proxy from withholding lines until the end.
+      res.writeHead(200, {
+        'Content-Type': 'application/x-ndjson',
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
       });
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-      res.end(JSON.stringify(result));
+      const emit = (category, events) => {
+        res.write(JSON.stringify({ category, events }) + '\n');
+      };
+      await handlePhenology(sanitizeKey(key), facts, {
+        force: !!force, cacheDir: CACHE_DIR, ollamaUrl: OLLAMA_URL, model: OLLAMA_MODEL,
+      }, emit);
+      res.end();
     } catch (e) {
       console.error('[image-server] /phenology failed:', e.message);
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: e.message }));
+      // Headers may already be sent (mid-stream); end the response either way.
+      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(res.headersSent ? '' : JSON.stringify({ error: e.message }));
     }
     return;
   }

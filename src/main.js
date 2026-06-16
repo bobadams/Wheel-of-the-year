@@ -7,7 +7,7 @@ import {
   canvas, ringOrder, ringState, displayState,
   currentData, smoothedData, actuals,
   setCurrentData, mergeCurrentData, setActivePreset, setActuals, setTodayDOY,
-  setPhenologyEvents,
+  setPhenologyEvents, setPhenologyCategory,
 } from './state.js';
 import { computeRingLayouts } from './draw/layout.js';
 import { drawRing } from './draw/ring.js';
@@ -228,11 +228,16 @@ async function fetchCity() {
 // switches quickly. Fails silently — the band just stays empty.
 function loadPhenology(data, opts = {}) {
   const forName = data.name;
-  fetchPhenology(data, opts)
-    .then(events => {
-      if (currentData.name === forName) { setPhenologyEvents(events); draw(); }
-    })
-    .catch(() => {});
+  setPhenologyEvents([]);
+  draw();
+  fetchPhenology(data, {
+    ...opts,
+    // Render each animal/plant category the moment it streams in (ignoring a
+    // stale response if the user has since switched locations).
+    onCategory: (category, events) => {
+      if (currentData.name === forName) { setPhenologyCategory(category, events); draw(); }
+    },
+  }).catch(() => {});
 }
 
 // ─── Presets ─────────────────────────────────────────────────────────────────

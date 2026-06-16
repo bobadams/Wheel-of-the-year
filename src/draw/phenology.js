@@ -13,8 +13,27 @@
  * the greedy collision avoidance in draw/holidays.js.
  */
 
-import { canvas, phenologyEvents } from '../state.js';
+import { canvas, phenologyEvents, displayState } from '../state.js';
 import { doy2angle, polar } from './canvas.js';
+
+// Per-category visibility toggles (set from the control panel).
+const CATEGORY_STATE_KEY = {
+  mammals: 'phenoMammals',
+  fish:    'phenoFish',
+  birds:   'phenoBirds',
+  insects: 'phenoInsects',
+  plants:  'phenoPlants',
+};
+
+// Arcs are colored by animal/plant category (the axis the events are organized
+// along), falling back to a per-type color, then olive.
+const CATEGORY_COLORS = {
+  mammals: '#cf6a3a', // amber — mammals
+  fish:    '#1f9e89', // teal — fish
+  birds:   '#2f7fb0', // blue — birds
+  insects: '#8e6fb0', // violet — insects
+  plants:  '#5a9e3a', // green — plants
+};
 
 const TYPE_COLORS = {
   bloom:     '#c2477f', // pink — flower blooms
@@ -24,6 +43,11 @@ const TYPE_COLORS = {
   breeding:  '#cf6a3a', // amber — breeding / birthing
   other:     '#7a8a4a', // olive — everything else
 };
+
+/** Color for an event: its category, then its type, then olive. */
+function eventColor(ev) {
+  return CATEGORY_COLORS[ev.category] || TYPE_COLORS[ev.event_type] || TYPE_COLORS.other;
+}
 
 /** Circular distance between two DOY values, in days (0–182.5). */
 function doyDist(a, b) {
@@ -39,19 +63,27 @@ function halfSpan(ev, labelDOY) {
 
 export function drawPhenology() {
   const { ctx, W, CX, CY } = canvas;
-  if (!phenologyEvents.length) return;
+  // Honor the per-category toggles; an unknown category defaults to visible.
+  const events = phenologyEvents.filter(ev => {
+    const key = CATEGORY_STATE_KEY[ev.category];
+    return !key || displayState[key] !== false;
+  });
+  if (!events.length) return;
 
-  const R_BASE    = W * 0.438; // innermost arc level
-  const STEP      = W * 0.020; // radial gap between levels
-  const ARC_W     = W * 0.0045;
-  const FONT_SIZE = W * 0.0125;
-  const MAX_LEVEL = 3;
+  // Band between the holidays labels and the axis (W·0.49). Four concentric
+  // levels fit; events that can't claim a clash-free level are dropped rather
+  // than stacked on top of another line.
+  const R_BASE    = W * 0.434; // innermost arc level
+  const STEP      = W * 0.0145; // radial gap between levels
+  const ARC_W     = W * 0.004;
+  const FONT_SIZE = W * 0.0112;
+  const MAX_LEVEL = 4;
 
   ctx.save();
   ctx.font = `${FONT_SIZE}px 'Crimson Pro',serif`;
 
   // Pre-compute geometry: center DOY (label anchor), text, and angular footprint.
-  const items = phenologyEvents.map(ev => {
+  const items = events.map(ev => {
     const text = ev.verified === false ? `${ev.label}*` : ev.label;
     const textW = ctx.measureText(text).width;
     // Label width expressed in DOY at the base radius (a conservative estimate).
@@ -60,12 +92,15 @@ export function drawPhenology() {
     return { ...ev, text, textW, center, half: halfSpan(ev, labelDOY) };
   });
 
-  // Sort by center DOY so the greedy pass walks the wheel in order.
-  items.sort((a, b) => a.center - b.center);
+  // Place the best-supported events first so, if the band runs out of room, it's
+  // the thinnest-evidence events that get dropped.
+  items.sort((a, b) => (b.obs_total || 0) - (a.obs_total || 0));
 
   // Greedy radial-level assignment: an event takes the lowest level whose already
-  // placed events don't angularly overlap it.
+  // placed events don't angularly overlap it. If no level is free, the event is
+  // dropped (kept out of `placed`) so lines never overlap.
   const levels = [];
+  const placed = [];
   for (const it of items) {
     let lvl = 0;
     for (; lvl < MAX_LEVEL; lvl++) {
@@ -73,14 +108,15 @@ export function drawPhenology() {
       const clash = occupants.some(o => doyDist(o.center, it.center) < o.half + it.half + 2);
       if (!clash) { occupants.push(it); break; }
     }
-    if (lvl === MAX_LEVEL) { lvl = MAX_LEVEL - 1; (levels[lvl] || (levels[lvl] = [])).push(it); }
+    if (lvl === MAX_LEVEL) continue; // no room without overlapping — drop it
     it.level = lvl;
     it.r = R_BASE + lvl * STEP;
+    placed.push(it);
   }
 
   // Draw arcs.
-  for (const it of items) {
-    const color = TYPE_COLORS[it.event_type] || TYPE_COLORS.other;
+  for (const it of placed) {
+    const color = eventColor(it);
     const a1 = doy2angle(it.startDOY + 0.5);
     let a2 = doy2angle(it.endDOY + 0.5);
     if (it.endDOY < it.startDOY) a2 += Math.PI * 2; // wrap across the solstice seam
@@ -97,11 +133,12 @@ export function drawPhenology() {
   }
 
   // Draw labels curved along each arc, centered on the arc midpoint and sitting
-  // just outside the stroke so the text runs parallel to (and bends with) the line.
-  for (const it of items) {
-    const color = TYPE_COLORS[it.event_type] || TYPE_COLORS.other;
+  // just outside the stroke so the text runs parallel to (and bends with) the
+  // line. The 0.55·FONT offset keeps a label clear of the next level's arc.
+  for (const it of placed) {
+    const color = eventColor(it);
     const aCenter = doy2angle(it.center + 0.5);
-    const rText = it.r + ARC_W / 2 + FONT_SIZE * 0.7;
+    const rText = it.r + ARC_W / 2 + FONT_SIZE * 0.55;
     ctx.save();
     ctx.globalAlpha  = it.verified === false ? 0.6 : 0.82;
     ctx.fillStyle    = color;
