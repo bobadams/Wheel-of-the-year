@@ -626,6 +626,11 @@ function init() {
   // Restore from URL params if present; otherwise fetch actuals for the default preset
   if (applyUrlParams()) return;
 
+  // Phenology band for the default preset — non-blocking, runs in parallel with
+  // the actuals fetch below. (loadPreset does this too; the startup path must as
+  // well or the band never loads on a plain page visit.)
+  loadPhenology(PRESETS[0].data);
+
   (async () => {
     const { lat, lon } = PRESETS[0].data;
     setStatus('loading', 'Fetching actuals for past year…');
