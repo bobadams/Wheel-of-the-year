@@ -315,9 +315,14 @@ async function reconcileLabels(inatEvents, llm) {
 async function buildCategory(cat, facts, lat, lon, llm) {
   const proposed = await proposeCategory(cat, facts, llm);
   const anchored = [];
+  // Drop events that resolve to a taxon already kept this category: the LLM often
+  // proposes two events for one species (e.g. "Steelhead spawning" and "Trout
+  // emergence" both → Oncorhynchus mykiss), which would draw two identical,
+  // overlapping arcs. Keep the first; its timing/window is the same anyway.
+  const seenTaxa = new Set();
   for (const ev of proposed) {
     const a = await anchorEvent(ev, lat, lon, cat);
-    if (a) anchored.push(a);
+    if (a && !seenTaxa.has(a.taxon_id)) { seenTaxa.add(a.taxon_id); anchored.push(a); }
     await sleep(700); // be polite to iNaturalist (~60 req/min)
   }
 
