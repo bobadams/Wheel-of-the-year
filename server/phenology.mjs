@@ -17,10 +17,8 @@
 //      AND they show a clear seasonal peak — that observed window sets its dates
 //      (source:'inat', verified). Events that don't resolve, are too sparse, or
 //      show no real season are DROPPED (we keep only what the data confirms).
-//   3. RECONCILE labels: feed each confirmed event's observed peak back to the LLM
-//      so it can confirm the proposed label or relabel it to the activity actually
-//      happening then (e.g. elephant-seal "calving" → "juvenile haul-out" when
-//      observations peak in April, not the Dec-Feb calving the LLM guessed).
+//      Duplicate events that resolve to the same taxon within a category are
+//      collapsed. The LLM's proposed label is used as-is (no relabel pass).
 //
 // Results are disk-cached per location key, so each location generates once.
 //
@@ -32,10 +30,6 @@ import path from 'node:path';
 const INAT = 'https://api.inaturalist.org/v1';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// 0-indexed DOY (Jan 1 = 0) of the first day of each month, non-leap year — the
-// same calendar-DOY convention the holidays band uses (Feb 29 excluded).
-const MONTH_START = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-const MONTH_NAME  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const VALID_TYPES = ['bloom', 'migration', 'arrival', 'emergence', 'breeding', 'other'];
 
 // Animal/plant categories, each queried separately and confirmed against its
@@ -221,11 +215,10 @@ function peakWindow(counts) {
 
 // Above this window width (in weeks, of 53) the distribution is too flat to call
 // a season — the species is observed roughly year-round, so we don't trust the
-// data peak and fall back to the LLM's proposed range instead.
+// data peak and drop the event as unconfirmed.
 const MAX_SEASON_WEEKS = 28;
 
 const weekToDOY  = w => (((w - 1) * 7) % 365 + 365) % 365;
-const doyToMonth = d => { let m = 0; for (let i = 0; i < 12; i++) if (d >= MONTH_START[i]) m = i; return m; }; // 0-based
 
 /**
  * Confirm one proposed event against iNaturalist. Returns a data-anchored event
@@ -254,64 +247,12 @@ async function anchorEvent(ev, lat, lon, cat) {
     label: ev.common_name, taxon_id: taxonId, event_type: ev.event_type, category: cat.id,
     source: 'inat', verified: true, obs_total: total,
     startDOY, peakDOY, endDOY, common_name: ev.common_name, expected_months: ev.expected_months,
-    observed_peak_month: doyToMonth(peakDOY) + 1,
   };
-}
-
-// ── Step 3: reconcile labels for data-anchored events ────────────────────────
-
-async function reconcileLabels(inatEvents, llm) {
-  if (!inatEvents.length) return;
-  const monthRange = ev => {
-    const a = MONTH_NAME[doyToMonth(ev.startDOY)], b = MONTH_NAME[doyToMonth(ev.endDOY)];
-    return a === b ? a : `${a}–${b}`;
-  };
-  const items = inatEvents.map((ev, i) => ({
-    i,
-    proposed: ev.common_name,
-    taxon: ev.event_type,
-    expected: ev.expected_months ? `${MONTH_NAME[ev.expected_months[0] - 1]}–${MONTH_NAME[ev.expected_months[1] - 1]}` : 'unknown',
-    observed_peak: MONTH_NAME[(ev.observed_peak_month - 1)],
-    observed_span: monthRange(ev),
-  }));
-  const prompt = [
-    'For each wildlife/plant event below, you are given the originally proposed',
-    'event label, its type, the months it was EXPECTED, and the months when the',
-    'species is ACTUALLY most observed near this location (from citizen-science data).',
-    '',
-    'If the observed timing roughly matches what was expected, keep a clean, short',
-    'label for the event. But if the data peaks in a clearly DIFFERENT season than',
-    'expected, the proposed event is probably not what the data shows — RELABEL it',
-    'to the activity that species is most likely doing at the OBSERVED time of year',
-    'at this place (e.g. juvenile haul-out, post-breeding dispersal, peak sightings,',
-    'fall foliage) rather than keeping the wrong event.',
-    '',
-    'Events:',
-    JSON.stringify(items),
-    '',
-    'Respond with ONLY JSON: {"labels":[{"i":0,"label":"...","confirmed":true}, ...]}',
-    'Each label is a natural, human-readable event name written with COMPLETE words',
-    'only — for example "California poppy bloom", "Monarch butterfly migration",',
-    '"Western fence lizard emergence". Never abbreviate, clip, shorten, or cut off a',
-    'word; spell every word in full. There is no character limit. Provide one entry',
-    'per event, with the same i values.',
-  ].join('\n');
-
-  const obj = await ollamaJSON(prompt, { ...llm, temperature: 0.2 });
-  const labels = obj && Array.isArray(obj.labels) ? obj.labels : null;
-  if (!labels) return; // keep proposed labels on failure
-  for (const l of labels) {
-    const ev = inatEvents[l.i];
-    if (ev && typeof l.label === 'string' && l.label.trim()) {
-      ev.label = l.label.trim();
-      ev.confirmed = l.confirmed !== false;
-    }
-  }
 }
 
 // ── Orchestration + cache ─────────────────────────────────────────────────────
 
-/** Propose → confirm → reconcile one category, returning its kept events. */
+/** Propose → confirm one category, returning its kept events. */
 async function buildCategory(cat, facts, lat, lon, llm) {
   const proposed = await proposeCategory(cat, facts, llm);
   const anchored = [];
@@ -325,8 +266,6 @@ async function buildCategory(cat, facts, lat, lon, llm) {
     if (a && !seenTaxa.has(a.taxon_id)) { seenTaxa.add(a.taxon_id); anchored.push(a); }
     await sleep(700); // be polite to iNaturalist (~60 req/min)
   }
-
-  await reconcileLabels(anchored, llm);
 
   const events = anchored.map(e => ({
     label: trimLabel(e.label),
