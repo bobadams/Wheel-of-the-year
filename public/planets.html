@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Wandering Stars — a planetary ephemeris wheel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0e1a;
+    --panel:#131829;
+    --ink:#e8e2d0;
+    --ink-dim:#9a94a8;
+    --gold:#d4af5a;
+    --gold-dim:#8a7440;
+    --accent:#e0764f;
+    --line:#2a3050;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--bg); color:var(--ink); font-family:"Crimson Pro",Georgia,serif;}
+  body{
+    min-height:100vh; display:flex; flex-direction:column; align-items:center;
+    background:radial-gradient(ellipse 120% 90% at 50% -10%, #1a2140 0%, var(--bg) 60%);
+    padding:1.2rem 1rem 2.5rem;
+  }
+  header{text-align:center; margin-bottom:.6rem;}
+  h1{
+    font-family:Cinzel,serif; font-weight:600; font-size:clamp(1.4rem,4vw,2rem);
+    letter-spacing:.14em; color:var(--gold); text-transform:uppercase;
+  }
+  header p{color:var(--ink-dim); font-style:italic; font-size:1.02rem; margin-top:.15rem;}
+
+  #wheelWrap{ width:min(92vw, 600px); position:relative; }
+  canvas{ display:block; width:100%; }
+
+  /* ---- date readout ---- */
+  #readout{ text-align:center; margin:.5rem 0 .9rem; }
+  #dateLine{ font-family:Cinzel,serif; font-size:clamp(1.05rem,3vw,1.45rem); letter-spacing:.05em; color:var(--ink); }
+  #deltaLine{ color:var(--ink-dim); font-size:.98rem; font-style:italic; min-height:1.3em; }
+  #deltaLine b{ color:var(--gold); font-style:normal; font-weight:600; }
+
+  /* ---- controls ---- */
+  #controls{ width:min(92vw, 600px); background:var(--panel); border:1px solid var(--line);
+             border-radius:14px; padding:1rem 1.1rem 1.2rem; }
+  .btnRow{ display:flex; justify-content:center; gap:.4rem; flex-wrap:wrap; margin-bottom:.9rem;}
+  button{
+    font-family:"Crimson Pro",serif; font-size:.95rem; color:var(--ink);
+    background:#1b2138; border:1px solid var(--line); border-radius:8px;
+    padding:.32rem .7rem; cursor:pointer; transition:border-color .15s, background .15s;
+  }
+  button:hover{ border-color:var(--gold-dim); background:#232b48;}
+  button.now{ color:var(--gold); border-color:var(--gold-dim); font-family:Cinzel,serif;
+              letter-spacing:.08em; padding:.32rem 1rem;}
+
+  .shuttleRow{ display:flex; align-items:center; gap:.7rem; }
+  .shuttleRow .cap{ font-size:.85rem; color:var(--ink-dim); white-space:nowrap; user-select:none;}
+  #shuttle{
+    -webkit-appearance:none; appearance:none; flex:1; height:12px; border-radius:6px; outline:none;
+    background:linear-gradient(90deg,
+      rgba(224,118,79,.55) 0%, rgba(224,118,79,.12) 42%,
+      rgba(212,175,90,.55) 49.2%, rgba(212,175,90,.55) 50.8%,
+      rgba(126,168,212,.12) 58%, rgba(126,168,212,.55) 100%);
+    border:1px solid var(--line);
+  }
+  #shuttle::-webkit-slider-thumb{
+    -webkit-appearance:none; width:28px; height:28px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #f4dfa2, var(--gold) 55%, #7a6330);
+    border:1px solid #3a3010; cursor:grab; box-shadow:0 2px 8px rgba(0,0,0,.55);
+  }
+  #shuttle::-moz-range-thumb{
+    width:28px; height:28px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #f4dfa2, var(--gold) 55%, #7a6330);
+    border:1px solid #3a3010; cursor:grab; box-shadow:0 2px 8px rgba(0,0,0,.55);
+  }
+  #shuttle:active::-webkit-slider-thumb{ cursor:grabbing; }
+  #rateLine{ text-align:center; margin-top:.35rem; font-size:.95rem; color:var(--ink-dim);
+             font-style:italic; min-height:1.3em;}
+  #rateLine b{ color:var(--gold); font-style:normal;}
+  .hint{ text-align:center; color:var(--ink-dim); font-size:.85rem; margin-top:.55rem; opacity:.8;}
+
+  .dateRow{ display:flex; justify-content:center; align-items:center; gap:.6rem; margin-top:.8rem;}
+  .dateRow label{ color:var(--ink-dim); font-size:.95rem;}
+  input[type=datetime-local]{
+    font-family:"Crimson Pro",serif; font-size:.95rem; color:var(--ink);
+    background:#1b2138; border:1px solid var(--line); border-radius:8px; padding:.3rem .5rem;
+    color-scheme:dark;
+  }
+
+  /* ---- planet chips ---- */
+  #chips{ width:min(92vw,600px); display:flex; flex-wrap:wrap; justify-content:center;
+          gap:.35rem .5rem; margin-top:.9rem;}
+  .chip{
+    background:var(--panel); border:1px solid var(--line); border-radius:999px;
+    padding:.14rem .6rem; font-size:.92rem; white-space:nowrap;
+  }
+  .chip .g{ font-size:1.05rem; margin-right:.28rem;}
+  .chip .rx{ color:var(--accent); font-size:.8rem; margin-left:.2rem;}
+
+  footer{ margin-top:1.1rem; color:var(--ink-dim); font-size:.82rem; font-style:italic;
+          text-align:center; max-width:560px; opacity:.75;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>The Wandering Stars</h1>
+  <p>geocentric planetary positions on the tropical zodiac</p>
+</header>
+
+<div id="wheelWrap"><canvas id="sky"></canvas></div>
+
+<div id="readout">
+  <div id="dateLine"></div>
+  <div id="deltaLine"></div>
+</div>
+
+<div id="controls">
+  <div class="btnRow">
+    <button data-step="-y">−1 yr</button>
+    <button data-step="-mo">−1 mo</button>
+    <button data-step="-d">−1 day</button>
+    <button data-step="-h">−1 hr</button>
+    <button class="now" id="btnNow">Now</button>
+    <button data-step="+h">+1 hr</button>
+    <button data-step="+d">+1 day</button>
+    <button data-step="+mo">+1 mo</button>
+    <button data-step="+y">+1 yr</button>
+  </div>
+
+  <div class="shuttleRow">
+    <span class="cap">◀ past</span>
+    <input id="shuttle" type="range" min="-100" max="100" step="0.1" value="0"
+           aria-label="time shuttle: deflection sets speed, release to stop">
+    <span class="cap">future ▶</span>
+  </div>
+  <div id="rateLine">hold and drag — a nudge moves hours, full throw sweeps years</div>
+  <div class="hint">arrow keys: ±1 day &nbsp;·&nbsp; shift+arrows: ±1 hour</div>
+
+  <div class="dateRow">
+    <label for="dateInput">jump to</label>
+    <input id="dateInput" type="datetime-local">
+  </div>
+</div>
+
+<div id="chips"></div>
+
+<footer>
+  Planetary longitudes from JPL approximate Keplerian elements (best 1800–2050, shown 1600–2400);
+  Moon from a truncated lunar theory, good to ~0.3°. Tropical zodiac, equinox of date, geocentric.
+</footer>
+
+<script>
+'use strict';
+/* ============================== astronomy ============================== */
+const DEG = Math.PI/180;
+const DAY = 86400000, HOUR = 3600000, YEAR = 365.25*DAY;
+const T_MIN = Date.UTC(1600,0,1), T_MAX = Date.UTC(2400,11,31,23,59);
+const MAX_RATE = 10*YEAR;              // ms of sim time per real second, at full deflection
+
+const wrap360 = x => ((x % 360) + 360) % 360;
+const wrap180 = x => { x = wrap360(x); return x > 180 ? x - 360 : x; };
+const clampT  = t => Math.min(T_MAX, Math.max(T_MIN, t));
+
+/* JPL "Keplerian elements for approximate positions of the major planets", 1800–2050.
+   el = [a (au), e, I (deg), L (deg), long.peri (deg), long.node (deg)]; rate = per Julian century */
+const EARTH = { el:[1.00000261,0.01671123,-0.00001531,100.46457166,102.93768193,0.0],
+                rate:[0.00000562,-0.00004392,-0.01294668,35999.37244981,0.32327364,0.0] };
+const ORBITS = {
+  mercury:{ el:[0.38709927,0.20563593,7.00497902,252.25032350,77.45779628,48.33076593],
+            rate:[0.00000037,0.00001906,-0.00594749,149472.67411175,0.16047689,-0.12534081] },
+  venus:  { el:[0.72333566,0.00677672,3.39467605,181.97909950,131.60246718,76.67984255],
+            rate:[0.00000390,-0.00004107,-0.00078890,58517.81538729,0.00268329,-0.27769418] },
+  mars:   { el:[1.52371034,0.09339410,1.84969142,-4.55343205,-23.94362959,49.55953891],
+            rate:[0.00001847,0.00007882,-0.00813131,19140.30268499,0.44441088,-0.29257343] },
+  jupiter:{ el:[5.20288700,0.04838624,1.30439695,34.39644051,14.72847983,100.47390909],
+            rate:[-0.00011607,-0.00013253,-0.00183714,3034.74612775,0.21252668,0.20469106] },
+  saturn: { el:[9.53667594,0.05386179,2.48599187,49.95424423,92.59887831,113.66242448],
+            rate:[-0.00125060,-0.00050991,0.00193609,1222.49362201,-0.41897216,-0.28867794] },
+  uranus: { el:[19.18916464,0.04725744,0.77263783,313.23810451,170.95427630,74.01692503],
+            rate:[-0.00196176,-0.00004397,-0.00242939,428.48202785,0.40805281,0.04240589] },
+  neptune:{ el:[30.06992276,0.00859048,1.77004347,-55.12002969,44.96476227,131.78422574],
+            rate:[0.00026291,0.00005105,0.00035372,218.45945325,-0.32241464,-0.00508664] },
+  pluto:  { el:[39.48211675,0.24882730,17.14001206,238.92903833,224.06891629,110.30393684],
+            rate:[-0.00031596,0.00005170,0.00004818,145.20780515,-0.04062942,-0.01183482] },
+};
+
+function keplerSolve(M, e){                      // M in radians, wrapped
+  M = Math.atan2(Math.sin(M), Math.cos(M));
+  let E = M + e*Math.sin(M);
+  for (let i = 0; i < 10; i++){
+    const dM = M - (E - e*Math.sin(E));
+    const dE = dM / (1 - e*Math.cos(E));
+    E += dE;
+    if (Math.abs(dE) < 1e-9) break;
+  }
+  return E;
+}
+
+function helioPos(o, T){                         // J2000 ecliptic xyz (au)
+  const a  = o.el[0] + o.rate[0]*T,  e  = o.el[1] + o.rate[1]*T;
+  const I  = (o.el[2] + o.rate[2]*T)*DEG;
+  const L  =  o.el[3] + o.rate[3]*T;
+  const wb =  o.el[4] + o.rate[4]*T;             // longitude of perihelion
+  const Om =  o.el[5] + o.rate[5]*T;             // longitude of ascending node
+  const M  = (L - wb)*DEG, w = (wb - Om)*DEG, O = Om*DEG;
+  const E  = keplerSolve(M, e);
+  const xp = a*(Math.cos(E) - e), yp = a*Math.sqrt(1 - e*e)*Math.sin(E);
+  const cw = Math.cos(w), sw = Math.sin(w), cO = Math.cos(O), sO = Math.sin(O),
+        ci = Math.cos(I), si = Math.sin(I);
+  return {
+    x: (cw*cO - sw*sO*ci)*xp + (-sw*cO - cw*sO*ci)*yp,
+    y: (cw*sO + sw*cO*ci)*xp + (-sw*sO + cw*cO*ci)*yp,
+    z: (sw*si)*xp + (cw*si)*yp,
+  };
+}
+
+function moonLon(T){                             // ecliptic longitude of date, ~0.3° accuracy
+  const s = d => Math.sin(d*DEG);
+  return wrap360(218.32 + 481267.881*T
+    + 6.29*s(135.0 + 477198.87*T) - 1.27*s(259.3 - 413335.36*T)
+    + 0.66*s(235.7 + 890534.22*T) + 0.21*s(269.9 + 954397.74*T)
+    - 0.19*s(357.5 + 35999.05*T)  - 0.11*s(186.5 + 966404.03*T));
+}
+
+const BODIES = [
+  { id:'sun',     name:'Sun',     glyph:'☉', color:'#f0c419' },
+  { id:'moon',    name:'Moon',    glyph:'☽', color:'#d5dced' },
+  { id:'mercury', name:'Mercury', glyph:'☿', color:'#d9a441' },
+  { id:'venus',   name:'Venus',   glyph:'♀', color:'#7ec8a9' },
+  { id:'mars',    name:'Mars',    glyph:'♂', color:'#e06a4f' },
+  { id:'jupiter', name:'Jupiter', glyph:'♃', color:'#e0a458' },
+  { id:'saturn',  name:'Saturn',  glyph:'♄', color:'#b09a7a' },
+  { id:'uranus',  name:'Uranus',  glyph:'♅', color:'#74c7d4' },
+  { id:'neptune', name:'Neptune', glyph:'♆', color:'#6a8fd4' },
+  { id:'pluto',   name:'Pluto',   glyph:'♇', color:'#b58fc4' },
+];
+
+function lonsAt(T){                              // geocentric ecliptic longitudes, equinox of date
+  const e = helioPos(EARTH, T);
+  const prec = 1.39678*T;                        // J2000 → equinox-of-date precession in longitude
+  const out = {};
+  out.sun  = wrap360(Math.atan2(-e.y, -e.x)/DEG + prec);
+  out.moon = moonLon(T);
+  for (const id in ORBITS){
+    const p = helioPos(ORBITS[id], T);
+    out[id] = wrap360(Math.atan2(p.y - e.y, p.x - e.x)/DEG + prec);
+  }
+  return out;
+}
+
+function computeAll(ms){
+  const T  = (ms/DAY + 2440587.5 - 2451545.0)/36525;
+  const dT = 0.25/36525;                         // +6 h, for retrograde detection
+  const now  = lonsAt(T), next = lonsAt(T + dT);
+  return BODIES.map(b => ({
+    ...b,
+    lon:   now[b.id],
+    retro: b.id !== 'sun' && b.id !== 'moon' && wrap180(next[b.id] - now[b.id]) < 0,
+  }));
+}
+
+/* ============================== rendering ============================== */
+const SIGNS = [
+  ['Aries','♈','fire'],['Taurus','♉','earth'],['Gemini','♊','air'],['Cancer','♋','water'],
+  ['Leo','♌','fire'],['Virgo','♍','earth'],['Libra','♎','air'],['Scorpio','♏','water'],
+  ['Sagittarius','♐','fire'],['Capricorn','♑','earth'],['Aquarius','♒','air'],['Pisces','♓','water'],
+];
+const ELEM = { fire:'224,118,79', earth:'170,178,110', air:'126,168,212', water:'106,196,184' };
+const ASPECTS = [
+  { ang:0,   orb:7, color:'212,175,90'  },      // conjunction
+  { ang:60,  orb:4, color:'106,196,184' },      // sextile
+  { ang:90,  orb:6, color:'224,106,79'  },      // square
+  { ang:120, orb:6, color:'126,168,212' },      // trine
+  { ang:180, orb:7, color:'204,82,96'   },      // opposition
+];
+
+const canvas = document.getElementById('sky');
+const ctx = canvas.getContext('2d');
+const wrapEl = document.getElementById('wheelWrap');
+let W = 0, stars = [];
+
+function resize(){
+  const w = wrapEl.getBoundingClientRect().width;
+  const dpr = window.devicePixelRatio || 1;
+  W = w;
+  canvas.width = Math.round(w*dpr);
+  canvas.height = Math.round(w*dpr);
+  canvas.style.height = w + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  let seed = 42;
+  const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+  stars = Array.from({length: 90}, () => ({ x:rnd(), y:rnd(), r:rnd()*1.1 + .3, a:rnd()*.5 + .15 }));
+  needsDraw = true;
+}
+window.addEventListener('resize', resize);
+
+const screenAngle = lonDeg => Math.PI - lonDeg*DEG;   // 0° Aries at 9 o'clock, signs counterclockwise
+function pt(cx, cy, lonDeg, r){
+  const a = screenAngle(lonDeg);
+  return { x: cx + r*Math.cos(a), y: cy + r*Math.sin(a) };
+}
+
+const GLYPH_FONT = '"Apple Symbols","Segoe UI Symbol",serif';
+
+function draw(bodies){
+  const cx = W/2, cy = W/2, R = W/2*0.96;
+  ctx.clearRect(0, 0, W, W);
+
+  ctx.save();
+  for (const s of stars){
+    ctx.globalAlpha = s.a;
+    ctx.fillStyle = '#cfd6ea';
+    ctx.beginPath(); ctx.arc(s.x*W, s.y*W, s.r, 0, 2*Math.PI); ctx.fill();
+  }
+  ctx.restore();
+
+  const signOuter = R, signInner = R*0.845, tickR = signInner, hubR = R*0.40;
+  const glyphBase = R*0.70, glyphStep = R*0.095;
+
+  /* zodiac band */
+  for (let s = 0; s < 12; s++){
+    const a0 = screenAngle(s*30), a1 = screenAngle((s + 1)*30);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, signOuter, a0, a1, true);
+    ctx.arc(cx, cy, signInner, a1, a0, false);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${ELEM[SIGNS[s][2]]},0.10)`;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(212,175,90,0.28)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const g = pt(cx, cy, s*30 + 15, (signOuter + signInner)/2);
+    ctx.fillStyle = `rgba(${ELEM[SIGNS[s][2]]},0.95)`;
+    ctx.font = `${R*0.085}px ${GLYPH_FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(SIGNS[s][1], g.x, g.y);
+    ctx.restore();
+  }
+
+  /* rim + degree ticks */
+  ctx.save();
+  ctx.strokeStyle = 'rgba(212,175,90,0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, signOuter, 0, 2*Math.PI); ctx.stroke();
+  ctx.lineWidth = 1;
+  for (let d = 0; d < 360; d += 5){
+    const len = d % 30 === 0 ? R*0.030 : d % 10 === 0 ? R*0.020 : R*0.012;
+    const p1 = pt(cx, cy, d, tickR), p2 = pt(cx, cy, d, tickR - len);
+    ctx.strokeStyle = d % 30 === 0 ? 'rgba(212,175,90,0.6)' : 'rgba(212,175,90,0.3)';
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(212,175,90,0.35)';
+  ctx.beginPath(); ctx.arc(cx, cy, hubR, 0, 2*Math.PI); ctx.stroke();
+  ctx.restore();
+
+  /* aspect chords */
+  ctx.save();
+  for (let i = 0; i < bodies.length; i++){
+    for (let j = i + 1; j < bodies.length; j++){
+      const sep = Math.abs(wrap180(bodies[i].lon - bodies[j].lon));
+      for (const asp of ASPECTS){
+        const dev = Math.abs(sep - asp.ang);
+        if (dev <= asp.orb){
+          const tight = 1 - dev/asp.orb;
+          const p1 = pt(cx, cy, bodies[i].lon, hubR), p2 = pt(cx, cy, bodies[j].lon, hubR);
+          ctx.strokeStyle = `rgba(${asp.color},${0.15 + 0.55*tight})`;
+          ctx.lineWidth = 0.6 + 1.6*tight;
+          ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+          break;
+        }
+      }
+    }
+  }
+  ctx.restore();
+
+  /* planets: stack glyphs inward when crowded */
+  const placed = [];
+  const sorted = [...bodies].sort((a, b) => a.lon - b.lon);
+  for (const b of sorted){
+    let lvl = 0;
+    while (placed.some(q => q.lvl === lvl && Math.abs(wrap180(q.lon - b.lon)) < 9)) lvl++;
+    b.lvl = Math.min(lvl, 3);
+    placed.push({ lon: b.lon, lvl: b.lvl });
+  }
+
+  for (const b of sorted){
+    const gR = glyphBase - b.lvl*glyphStep;
+    const gp = pt(cx, cy, b.lon, gR);
+    const tp = pt(cx, cy, b.lon, tickR - R*0.012);
+    const hp = pt(cx, cy, b.lon, hubR);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(232,226,208,0.16)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(hp.x, hp.y); ctx.lineTo(tp.x, tp.y); ctx.stroke();
+
+    ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.arc(tp.x, tp.y, R*0.008, 0, 2*Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.arc(hp.x, hp.y, R*0.007, 0, 2*Math.PI); ctx.fill();
+
+    ctx.shadowColor = b.color; ctx.shadowBlur = 10;
+    ctx.font = `${R*0.088}px ${GLYPH_FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(b.glyph, gp.x, gp.y);
+    ctx.shadowBlur = 0;
+    if (b.retro){
+      ctx.fillStyle = '#e06a4f';
+      ctx.font = `italic ${R*0.036}px "Crimson Pro",serif`;
+      ctx.fillText('℞', gp.x + R*0.045, gp.y + R*0.038);
+    }
+    ctx.restore();
+  }
+
+  /* Earth at the centre of a geocentric sky */
+  ctx.save();
+  ctx.fillStyle = 'rgba(212,175,90,0.9)';
+  ctx.font = `${R*0.06}px ${GLYPH_FONT}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('⊕', cx, cy);
+  ctx.restore();
+}
+
+/* ============================== UI / time engine ============================== */
+const shuttle   = document.getElementById('shuttle');
+const rateLine  = document.getElementById('rateLine');
+const dateLine  = document.getElementById('dateLine');
+const deltaLine = document.getElementById('deltaLine');
+const dateInput = document.getElementById('dateInput');
+const chipsEl   = document.getElementById('chips');
+
+let simT   = Date.now();     // displayed time (ms)
+let target = simT;           // tween target for steps / date jumps
+let shuttleVal = 0;          // -1 … 1
+let needsDraw = true;
+
+const chips = BODIES.map(b => {
+  const el = document.createElement('span');
+  el.className = 'chip';
+  el.innerHTML = `<span class="g" style="color:${b.color}">${b.glyph}</span><span class="v"></span><span class="rx"></span>`;
+  chipsEl.appendChild(el);
+  return el;
+});
+
+const fmtDate = new Intl.DateTimeFormat(undefined, { weekday:'short', day:'numeric', month:'long', year:'numeric' });
+const fmtTime = new Intl.DateTimeFormat(undefined, { hour:'2-digit', minute:'2-digit' });
+
+function humanDur(ms){
+  ms = Math.abs(ms);
+  const units = [['y', YEAR], ['mo', YEAR/12], ['d', DAY], ['h', HOUR], ['m', 60000], ['s', 1000]];
+  const parts = [];
+  for (const [label, span] of units){
+    if (ms >= span || (parts.length && parts.length < 2)){
+      const n = Math.floor(ms/span);
+      if (n > 0 || parts.length) parts.push(n + label);
+      ms -= n*span;
+      if (parts.length === 2) break;
+    }
+  }
+  return parts.length ? parts.join(' ') : '0s';
+}
+
+function toLocalInput(ms){
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear().toString().padStart(4,'0')}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function updateReadout(){
+  const d = new Date(simT);
+  dateLine.textContent = `${fmtDate.format(d)} · ${fmtTime.format(d)}`;
+  const dt = simT - Date.now();
+  deltaLine.innerHTML = Math.abs(dt) < 60000
+    ? 'now'
+    : (dt > 0 ? '<b>' + humanDur(dt) + '</b> in the future' : '<b>' + humanDur(dt) + '</b> in the past');
+  if (document.activeElement !== dateInput) dateInput.value = toLocalInput(simT);
+}
+
+function updateChips(bodies){
+  bodies.forEach((b, i) => {
+    const sign = Math.floor(b.lon/30) % 12;
+    const deg = Math.floor(b.lon % 30);
+    chips[i].querySelector('.v').textContent = `${deg}° ${SIGNS[sign][1]}`;
+    chips[i].querySelector('.rx').textContent = b.retro ? '℞' : '';
+  });
+}
+
+/* shuttle: deflection = speed (quartic curve → fine near centre, years/sec at the ends) */
+shuttle.addEventListener('input', () => { shuttleVal = shuttle.value/100; });
+function releaseShuttle(){
+  shuttle.value = 0;
+  shuttleVal = 0;
+  rateLine.textContent = 'hold and drag — a nudge moves hours, full throw sweeps years';
+}
+for (const ev of ['pointerup', 'pointercancel', 'keyup']) shuttle.addEventListener(ev, releaseShuttle);
+window.addEventListener('blur', releaseShuttle);
+
+/* step buttons: calendar-aware, tweened */
+function stepTarget(code){
+  const d = new Date(target);
+  if (code === '+h') d.setHours(d.getHours() + 1);
+  if (code === '-h') d.setHours(d.getHours() - 1);
+  if (code === '+d') d.setDate(d.getDate() + 1);
+  if (code === '-d') d.setDate(d.getDate() - 1);
+  if (code === '+mo') d.setMonth(d.getMonth() + 1);
+  if (code === '-mo') d.setMonth(d.getMonth() - 1);
+  if (code === '+y') d.setFullYear(d.getFullYear() + 1);
+  if (code === '-y') d.setFullYear(d.getFullYear() - 1);
+  target = clampT(d.getTime());
+}
+document.querySelectorAll('button[data-step]').forEach(b =>
+  b.addEventListener('click', () => stepTarget(b.dataset.step)));
+document.getElementById('btnNow').addEventListener('click', () => { target = Date.now(); });
+
+dateInput.addEventListener('change', () => {
+  const t = new Date(dateInput.value).getTime();
+  if (!isNaN(t)) target = clampT(t);
+});
+
+window.addEventListener('keydown', e => {
+  if (e.target === dateInput || e.target === shuttle) return;
+  if (e.key === 'ArrowRight'){ stepTarget(e.shiftKey ? '+h' : '+d'); e.preventDefault(); }
+  if (e.key === 'ArrowLeft'){ stepTarget(e.shiftKey ? '-h' : '-d'); e.preventDefault(); }
+});
+
+/* main loop */
+let lastFrame = performance.now();
+function frame(now){
+  const dt = Math.min(0.1, (now - lastFrame)/1000);
+  lastFrame = now;
+  const prevT = simT;
+
+  if (shuttleVal !== 0){
+    const rate = Math.sign(shuttleVal)*Math.pow(Math.abs(shuttleVal), 4)*MAX_RATE;  // ms of sim time per real second
+    simT = clampT(simT + rate*dt);
+    target = simT;
+    rateLine.innerHTML = `<b>${shuttleVal > 0 ? '+' : '−'}${humanDur(Math.abs(rate))}</b> per second`;
+  } else if (Math.abs(target - simT) > 500){
+    simT += (target - simT)*Math.min(1, dt*5);   // ease toward stepped/jumped target
+  } else {
+    simT = target;
+  }
+
+  if (simT !== prevT || needsDraw){
+    needsDraw = false;
+    const bodies = computeAll(simT);
+    draw(bodies);
+    updateReadout();
+    updateChips(bodies);
+  }
+  requestAnimationFrame(frame);
+}
+
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
