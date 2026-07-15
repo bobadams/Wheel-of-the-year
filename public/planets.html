@@ -53,6 +53,7 @@
   button:hover{ border-color:var(--gold-dim); background:#232b48;}
   button.now{ color:var(--gold); border-color:var(--gold-dim); font-family:Cinzel,serif;
               letter-spacing:.08em; padding:.32rem 1rem;}
+  button.copied{ color:var(--gold); border-color:var(--gold-dim); }
 
   .shuttleRow{ display:flex; align-items:center; gap:.7rem; }
   .shuttleRow .cap{ font-size:.85rem; color:var(--ink-dim); white-space:nowrap; user-select:none;}
@@ -141,6 +142,7 @@
   <div class="dateRow">
     <label for="dateInput">jump to</label>
     <input id="dateInput" type="datetime-local">
+    <button id="btnLink" title="Copy a link to this exact moment">Copy link</button>
   </div>
 </div>
 
@@ -431,7 +433,12 @@ const deltaLine = document.getElementById('deltaLine');
 const dateInput = document.getElementById('dateInput');
 const chipsEl   = document.getElementById('chips');
 
-let simT   = Date.now();     // displayed time (ms)
+function initialTime(){      // start from ?t=<ms> in the URL when present, else now
+  const raw = new URLSearchParams(location.search).get('t');
+  const t = raw != null ? Number(raw) : NaN;
+  return Number.isFinite(t) ? clampT(t) : Date.now();
+}
+let simT   = initialTime();  // displayed time (ms)
 let target = simT;           // tween target for steps / date jumps
 let shuttleVal = 0;          // -1 … 1
 let needsDraw = true;
@@ -517,6 +524,41 @@ document.getElementById('btnNow').addEventListener('click', () => { target = Dat
 dateInput.addEventListener('change', () => {
   const t = new Date(dateInput.value).getTime();
   if (!isNaN(t)) target = clampT(t);
+});
+
+/* permalink: encode the displayed moment as ?t=<ms>, put it in the address bar,
+   and copy it to the clipboard. The address-bar update is the reliable part, so
+   feedback is shown synchronously; the clipboard write is attempted best-effort. */
+const btnLink = document.getElementById('btnLink');
+function copyToClipboard(text){                  // returns a promise, never rejects
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    return navigator.clipboard.writeText(text).then(() => true, () => execCopy(text));
+  }
+  return Promise.resolve(execCopy(text));
+}
+function execCopy(text){                          // legacy fallback
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+btnLink.addEventListener('click', () => {
+  const url = new URL(location.href);
+  url.searchParams.set('t', Math.round(target)); // the moment we're settling on
+  const link = url.href;
+  history.replaceState(null, '', link);          // address bar now holds the shareable link
+  copyToClipboard(link);                         // best-effort, non-blocking
+  btnLink.textContent = 'Link copied ✓';
+  btnLink.classList.add('copied');
+  clearTimeout(btnLink._t);
+  btnLink._t = setTimeout(() => {
+    btnLink.textContent = 'Copy link';
+    btnLink.classList.remove('copied');
+  }, 1600);
 });
 
 window.addEventListener('keydown', e => {
