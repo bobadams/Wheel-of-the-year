@@ -76,9 +76,14 @@ npm run generate-presets  # Regenerate Oakland preset from live APIs (Node.js)
 - **Git remote:** `git@github.com:bobadams/wheel-of-the-year.git`
 
 ### Live URLs
+- `https://slamad.ong/` — **landing page**: a static index of all the sites
+  below (`~/Sites/landing/index.html`). Previously redirected to `/astrology/`.
 - `https://slamad.ong/wheel/` — Wheel of the Year (this app)
 - `https://slamad.ong/astrology/` — Daily Astrology (sibling app)
-- `https://slamad.ong` — redirects to `/astrology/`
+- `https://slamad.ong/planets.html` — Ephemeris / "The Wandering Stars" planetary
+  ephemeris wheel (served from `~/Sites/wandering-stars/planets.html`)
+- `https://slamad.ong/synastry.html` — Synastry Reading (served from
+  `~/Sites/wandering-stars/synastry.html`)
 
 ### Vite base path
 `vite.config.js` sets `base: '/wheel/'` so all assets are served from the correct subpath. Do not change this without updating the nginx config to match.
@@ -112,7 +117,24 @@ location /wheel/ {
     alias /Users/bradfordadams/Sites/wheel-of-the-year/dist/;
     try_files $uri $uri/ /wheel/index.html;
 }
+
+# Ephemeris ("The Wandering Stars") and Synastry are single static files
+# served from ~/Sites/wandering-stars/.
+location = /planets.html   { root /Users/bradfordadams/Sites/wandering-stars; }
+location = /synastry.html  { root /Users/bradfordadams/Sites/wandering-stars; }
+
+# slamad.ong root serves the static landing index (was: 302 → /astrology/).
+location = / {
+    root /Users/bradfordadams/Sites/landing;
+    try_files /index.html =404;
+}
 ```
+
+> **Anthropic API key:** the `/api/anthropic/` proxy's `x-api-key` is NOT inlined
+> in `daily-astrology.conf`. It lives in a single `chmod 600` file at
+> `/opt/homebrew/etc/nginx/anthropic-key.conf` (kept **outside** the `servers/*`
+> glob so nginx doesn't load it as a standalone server), pulled in with
+> `include`. To rotate: edit that one file and `nginx -s reload`.
 
 ### Restarting the tunnel
 If the tunnel goes down:
@@ -285,7 +307,15 @@ button (forces regeneration, bypassing the cache).
 ### Image service — deployment
 - **Location on server:** `~/Sites/wheel-of-the-year/server/image-server.mjs`
 - **Port:** `127.0.0.1:7871` (env `PORT`); cache dir `image-cache/` (env `IMAGE_CACHE_DIR`)
-- **Upstreams:** Ollama `127.0.0.1:11434`, Forge `127.0.0.1:7860` (both local)
+- **Upstreams:** Ollama `127.0.0.1:11434`, Forge `127.0.0.1:7860` (both local);
+  the phenology service also calls out to iNaturalist, GBIF, and Wikipedia (public
+  APIs, no key) and — if `EBIRD_API_KEY` is set — eBird.
+- **Optional env `EBIRD_API_KEY`:** read by `server/phenology.mjs`. When set, an
+  eBird nearby-observations call strengthens the **birds** occurrence gate; when
+  unset it's a clean no-op (bird timing still comes from GBIF, which ingests eBird
+  data anyway). eBird's weekly-frequency bar charts aren't a public API endpoint,
+  so this is used only as an occurrence check, not for timing. Get a key at
+  `https://ebird.org/api/keygen`; set it in the launchd plist's `EnvironmentVariables`.
 - **launchd:** `server/com.wheel.image-server.plist` → `~/Library/LaunchAgents/`
   (RunAtLoad + KeepAlive); logs to `~/Library/Logs/wheel-image-server.log`
 - **nginx:** a `/wheel-images/` location proxies to `http://127.0.0.1:7871/`

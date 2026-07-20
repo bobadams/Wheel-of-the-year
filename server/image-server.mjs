@@ -17,6 +17,8 @@
 // Run:  node server/image-server.mjs
 // Env:  PORT (default 7871), IMAGE_CACHE_DIR, OLLAMA_URL, FORGE_URL, OLLAMA_MODEL,
 //       FORGE_DIR, FORGE_LAUNCH, FORGE_BOOT_TIMEOUT, FORGE_IDLE_TIMEOUT
+//       EBIRD_API_KEY (optional; read by phenology.mjs — strengthens the birds
+//       occurrence gate. No-op if unset.)
 
 import http from 'node:http';
 import { promises as fs } from 'node:fs';

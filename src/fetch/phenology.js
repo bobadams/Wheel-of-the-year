@@ -61,7 +61,9 @@ function buildPhenologyFacts(data) {
  * Fetch (or generate) the phenology events for the current location. The service
  * streams newline-delimited JSON — one line per animal/plant category as it
  * becomes ready — so results can render progressively. Each event record is:
- *   { label, startDOY, peakDOY, endDOY, event_type, category, source, verified, obs_total }
+ *   { label, startDOY, peakDOY, endDOY, event_type, category, source, verified, confidence, obs_total }
+ * where `confidence` is 'verified' (iNat-timed, drawn solid) or 'corroborated'
+ * (occurrence + behaviour confirmed but timing estimated, drawn dashed with '*').
  * Resolves to the full accumulated array; rejects on a non-OK response so callers
  * can fail silently.
  *
