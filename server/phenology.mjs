@@ -33,19 +33,26 @@
 //       - ONSET vs PEAK — arrival/migration timing uses the rising edge (when the
 //         species shows up), not the observation peak (mid-season presence).
 //
-//   STEP 3  CORROBORATE + tier. An event that iNat confirms locally (enough nearby
-//     records + a clear season) is VERIFIED (solid). One it can't confirm is only
-//     kept as CORROBORATED (dashed, '*') when it clears a real occurrence gate
-//     (GBIF regional presence / iNat local records / eBird) AND has independent
-//     support for the behaviour (a Wikipedia trait match) or data-backed timing.
-//     Anything that fails the occurrence gate or has no support is REJECTED — this
-//     is what keeps the band grounded rather than imaginary.
+//   STEP 3  CORROBORATE + tier. Every taxon must first resolve within the category's
+//     iconic class (species_counts is already class-filtered; famous-lane names go
+//     through iNat's iconic filter and are DROPPED if they don't match — this keeps
+//     whales out of "fish", reptiles out of "birds"). An event iNat confirms locally
+//     (enough nearby records + a clear season) is VERIFIED (solid). One it can't is
+//     kept as CORROBORATED (dashed, '*') ONLY when it really occurs here (iNat local
+//     records / eBird), its behaviour is corroborated by Wikipedia, and a NARROW
+//     window can be formed from the sparse iNat histogram or the LLM's month hint.
+//     Anything else is REJECTED — precision over recall.
 //
-//   STEP 4  CROSS-CHECK. GBIF month facets (a second, larger occurrence dataset,
-//     and for birds largely eBird-sourced) sanity-check the iNat window: when they
-//     disagree by more than ~2 months a verified event is downgraded to dashed.
-//     For birds, an optional eBird nearby-observations call (env EBIRD_API_KEY)
-//     strengthens the occurrence gate.
+//     Labels are composed from the resolved species' common name + the event noun
+//     ("California Poppy bloom"), never the LLM's free-text label — the model tends
+//     to emit bare words ("Emergence", "None notable") that this makes impossible.
+//
+//   STEP 4  OCCURRENCE (birds). An optional eBird nearby-observations call (env
+//     EBIRD_API_KEY) strengthens the birds occurrence gate. NOTE: GBIF was evaluated
+//     as a timing source and REMOVED — its month facets carry the same observer bias
+//     as iNat but without annotation filtering or bias normalisation, and high-rank
+//     matches contaminated the output with year-round "seasons". iNat sets timing;
+//     GBIF is no longer consulted.
 //
 // Results are disk-cached per location key, so each location generates once.
 //
@@ -55,7 +62,6 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 const INAT = 'https://api.inaturalist.org/v1';
-const GBIF = 'https://api.gbif.org/v1';
 const WIKI = 'https://en.wikipedia.org/api/rest_v1/page/summary';
 const UA   = 'wheel-of-the-year/1.0';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -79,12 +85,16 @@ const MIN_OBS = 50;
 // Minimum iNat local records for the weaker occurrence gate used by the dashed
 // (corroborated) lane — enough to say "the species is really seen here".
 const MIN_LOCAL = 5;
-// Minimum GBIF nearby records for the corroborated lane's occurrence gate.
-const MIN_REGIONAL = 20;
+// Minimum iNat local records before we trust the (sparse) histogram to place a
+// corroborated event's window; below this we fall back to the LLM's month hint.
+const MIN_CORR_OBS = 15;
 // Above this window width (in weeks, of 53) the distribution is too flat to call
 // a season — the species is observed roughly year-round, so we don't trust the
 // data peak and won't mark the event verified.
 const MAX_SEASON_WEEKS = 28;
+// Hard cap on any event's total window, in days. A corroborated event whose window
+// (iNat-sparse or LLM-month) exceeds this is not a season and is dropped.
+const MAX_WINDOW_DAYS = 150;
 
 // iNat controlled term "Plant Phenology" (12) → Flowering (13); "Life Stage" (1)
 // → Larva (6, insect emergence) / Juvenile (8, recent breeding). The life-stage
@@ -100,14 +110,21 @@ const EBIRD_KEY = process.env.EBIRD_API_KEY || '';
 // DOY 0 to the top; month DOYs use the same calendar basis for consistency.
 const MONTH_START = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
 const monthMidDOY = m => (MONTH_START[(m - 1 + 12) % 12] + 15) % 365;
-function doyToMonth(doy) {
-  let m = 0;
-  for (let i = 11; i >= 0; i--) { if (doy >= MONTH_START[i]) { m = i; break; } }
-  return m + 1;
-}
-const monthDist = (a, b) => { const d = Math.abs(a - b) % 12; return d > 6 ? 12 - d : d; };
 const weekToDOY = w => (((w - 1) * 7) % 365 + 365) % 365;
+const doySpan = (a, b) => (b - a + 365) % 365; // forward circular distance, days
 const sum = a => a.reduce((s, v) => s + v, 0);
+
+// Event-type → the noun used to build a clean, species-anchored label. Labels are
+// always "<species common name> <noun>" so the LLM can never emit a bare word.
+const EVENT_NOUN = {
+  bloom: 'bloom', migration: 'migration', arrival: 'arrival',
+  emergence: 'emergence', breeding: 'breeding', other: 'season',
+};
+function composeLabel(commonName, type) {
+  const name = String(commonName || '').trim();
+  if (!name) return '';
+  return `${name} ${EVENT_NOUN[type] || 'season'}`;
+}
 
 /** Trim a label to <= max chars on a word boundary (no mid-word cuts). */
 function trimLabel(s, max = 32) {
@@ -210,25 +227,31 @@ async function proposeFromRealSpecies(cat, facts, species, llm) {
     'Respond with ONLY JSON of the form {"events": [ ... ]}.',
   ].join('\n');
 
-  const obj = await ollamaJSON(prompt, llm);
-  const list = obj && Array.isArray(obj.events) ? obj.events : Array.isArray(obj) ? obj : [];
-  const out = [];
-  for (const e of list) {
-    const ref = Math.round(Number(e.ref));
-    const sp = Number.isFinite(ref) && species[ref - 1] ? species[ref - 1] : null;
-    if (!sp) continue; // couldn't bind to a real species → drop
-    out.push({
-      common_name: String(e.common_name || e.name || sp.common).trim().slice(0, 60),
-      taxon: sp.name,
-      taxon_id: sp.id,
-      local_count: sp.count,
-      event_type: VALID_TYPES.includes(e.event_type) ? e.event_type : 'other',
-      expected_months: normMonths(e.expected_months),
-      lane: 'data',
-    });
-    if (out.length >= 3) break;
+  // The 3B model sometimes returns no valid refs on the first try; retry once at a
+  // lower temperature before giving up, so sparse-region coverage comes from real
+  // local species rather than falling through to the (weaker) famous lane.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const obj = await ollamaJSON(prompt, { ...llm, temperature: attempt === 0 ? 0.4 : 0.2 });
+    const list = obj && Array.isArray(obj.events) ? obj.events : Array.isArray(obj) ? obj : [];
+    const out = [];
+    for (const e of list) {
+      const ref = Math.round(Number(e.ref));
+      const sp = Number.isFinite(ref) && species[ref - 1] ? species[ref - 1] : null;
+      if (!sp) continue; // couldn't bind to a real species → drop
+      out.push({
+        taxon: sp.name,
+        taxon_id: sp.id,
+        species_common: sp.common,       // the label is built from this, not the LLM
+        local_count: sp.count,
+        event_type: VALID_TYPES.includes(e.event_type) ? e.event_type : 'other',
+        expected_months: normMonths(e.expected_months),
+        lane: 'data',
+      });
+      if (out.length >= 3) break;
+    }
+    if (out.length) return out;
   }
-  return out;
+  return [];
 }
 
 // ── Step 1b: famous / under-photographed events ───────────────────────────────
@@ -273,9 +296,10 @@ async function proposeFamousEvents(cat, facts, llm) {
   const list = obj && Array.isArray(obj.events) ? obj.events : Array.isArray(obj) ? obj : [];
   return list
     .map(e => ({
-      common_name: String(e.common_name || e.name || '').trim().slice(0, 60),
+      common_name: String(e.common_name || e.name || '').trim().slice(0, 60), // for the filter/debug only
       taxon: String(e.taxon || e.species || e.common_name || '').trim().slice(0, 80),
       taxon_id: null,
+      species_common: null,            // resolved (and class-checked) in anchorEvent
       event_type: VALID_TYPES.includes(e.event_type) ? e.event_type : 'other',
       expected_months: normMonths(e.expected_months),
       lane: 'famous',
@@ -294,15 +318,17 @@ function mergeProposals(dataProps, famousProps) {
     seen.add(key);
     merged.push(e);
   }
-  return merged.slice(0, 5); // bound the per-category iNat/GBIF call budget
+  return merged.slice(0, 5); // bound the per-category iNat/Wikipedia call budget
 }
 
 // ── Step 2: time against iNaturalist (corrected) ──────────────────────────────
 
 /**
- * Resolve a taxon name to an iNaturalist taxon id, constrained to `iconic` so a
- * name can't resolve into the wrong category. The /taxa autocomplete ignores its
- * own iconic filter, so we check each candidate's iconic_taxon_name ourselves.
+ * Resolve a taxon name to an iNaturalist { id, common }, constrained to `iconic` so
+ * a name can't resolve into the wrong category — returns null (event dropped) when
+ * no same-class match exists. The /taxa autocomplete ignores its own iconic filter,
+ * so we check each candidate's iconic_taxon_name ourselves. The common name feeds
+ * the composed event label.
  */
 async function resolveTaxon(taxon, iconic) {
   try {
@@ -312,7 +338,8 @@ async function resolveTaxon(taxon, iconic) {
     const json = await res.json();
     const results = json.results || [];
     const match = iconic ? results.find(r => r.iconic_taxon_name === iconic) : results[0];
-    return match?.id ?? null;
+    if (!match) return null;
+    return { id: match.id, common: match.preferred_common_name || match.name || taxon };
   } catch { return null; }
 }
 
@@ -406,18 +433,6 @@ function windowFromWeeks(counts, type) {
   return { startDOY: weekToDOY(startW), peakDOY: weekToDOY(peakW), endDOY: weekToDOY(endW), widthWeeks: w.width };
 }
 
-/** Turn a 12-bin month signal into a DOY window (same onset logic as weeks). */
-function windowFromMonths(months, type) {
-  const w = circularPeakWindow(months);
-  const onset = type === 'arrival' || type === 'migration';
-  const startM = w.start + 1, peakM = w.peak + 1, endM = w.end + 1;
-  if (onset) {
-    const end = startM === peakM ? endM : peakM;
-    return { startDOY: monthMidDOY(startM), peakDOY: monthMidDOY(startM), endDOY: monthMidDOY(end) };
-  }
-  return { startDOY: monthMidDOY(startM), peakDOY: monthMidDOY(peakM), endDOY: monthMidDOY(endM) };
-}
-
 /** Turn an LLM [startMonth, endMonth] guess into a DOY window (last resort). */
 function windowFromMonthRange(months, type) {
   if (!months) return null;
@@ -475,46 +490,10 @@ function corroborateBehavior(text, type) {
   return (BEHAVIOR_RE[type] || BEHAVIOR_RE.other).test(text);
 }
 
-// ── Step 4: cross-check against GBIF (+ optional eBird for birds) ──────────────
-
-/** GBIF taxon key for a scientific/common name, or null. */
-async function gbifKey(name) {
-  try {
-    const res = await fetch(`${GBIF}/species/match?name=${encodeURIComponent(name)}`,
-      { signal: AbortSignal.timeout(12000) });
-    if (!res.ok) return null;
-    const json = await res.json();
-    return json.usageKey ?? null;
-  } catch { return null; }
-}
-
-/**
- * GBIF month histogram + total records within `radiusKm` of the location. A
- * second, larger occurrence dataset (for birds, largely eBird-sourced) used both
- * as the corroborated lane's occurrence gate and to sanity-check the iNat month.
- */
-async function gbifMonths(key, lat, lon, radiusKm = 200) {
-  try {
-    const u = `${GBIF}/occurrence/search?taxonKey=${key}`
-            + `&geoDistance=${lat},${lon},${radiusKm}km&hasCoordinate=true`
-            + `&facet=month&facetLimit=12&limit=0`;
-    const res = await fetch(u, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const months = new Array(12).fill(0);
-    const f = (json.facets || []).find(x => x.field === 'MONTH');
-    if (f) for (const c of f.counts) { const m = Number(c.name); if (m >= 1 && m <= 12) months[m - 1] = c.count; }
-    return { total: json.count ?? sum(months), months };
-  } catch { return null; }
-}
-
-/** Resolve a name to GBIF month data, or null. */
-async function fetchGbif(name, lat, lon) {
-  const key = await gbifKey(name);
-  if (!key) return null;
-  await sleep(200);
-  return gbifMonths(key, lat, lon);
-}
+// ── Step 4: occurrence booster (eBird, birds only) ────────────────────────────
+// GBIF was removed as a timing source — its month facets carry the same observer
+// bias as iNat without annotation filtering or bias normalisation, and high-rank
+// matches produced year-round "seasons" (see the header note). iNat sets timing.
 
 /** Set of bird names observed near the point in the last 30 days (eBird), or null. */
 async function fetchEbirdNearby(lat, lon) {
@@ -545,84 +524,74 @@ function ebirdSupports(set, ev) {
 // ── Anchor one event → a confidence-tiered record (or null) ───────────────────
 
 /**
- * Verify one proposed event down its three claims and return a tiered record, or
- * null (rejected). `ctx` caches the per-category baseline histogram and eBird set.
- *   - VERIFIED (verified:true, solid): iNat has enough nearby records AND a clear,
- *     bias-corrected season; that observed window sets the dates. GBIF disagreement
- *     by >2 months downgrades it to dashed.
- *   - CORROBORATED (verified:false, dashed '*'): iNat can't confirm locally, but the
- *     species really occurs here (GBIF/iNat/eBird) AND the behaviour is supported
- *     (Wikipedia) or the timing is data-backed (GBIF); dates from GBIF or the LLM.
- *   - REJECTED (null): fails the occurrence gate or has no independent support.
+ * Verify one proposed event and return a confidence-tiered record, or null
+ * (rejected). `ctx` caches the per-category baseline histogram and eBird set.
+ *   - IDENTITY gate: the taxon must resolve within the category's iconic class
+ *     (data-lane species already are; famous-lane names are resolved here and
+ *     dropped if they don't match). The resolved common name builds the label.
+ *   - VERIFIED (solid): iNat has >= MIN_OBS nearby records AND a clear, bias-
+ *     corrected season; that observed window sets the dates.
+ *   - CORROBORATED (dashed '*'): iNat can't pin a season locally, but the species
+ *     really occurs here (iNat/eBird), Wikipedia corroborates the behaviour, and a
+ *     window narrower than MAX_WINDOW_DAYS forms from the sparse iNat histogram or
+ *     the LLM month hint. GBIF is never consulted for timing.
+ *   - REJECTED (null): wrong class, doesn't occur here, uncorroborated behaviour,
+ *     or no narrow window.
  */
 async function anchorEvent(ev, lat, lon, cat, ctx) {
-  // Claim 1 — species identity. Data-lane events already carry a real taxon id;
-  // famous-lane names are resolved (and iconic-constrained) here.
+  // Claim 1 — identity, class-constrained. Reject anything that doesn't resolve to
+  // the category's iconic class (this is what stops whales landing under "fish").
   let taxonId = ev.taxon_id ?? null;
-  if (!taxonId) { taxonId = await resolveTaxon(ev.taxon, cat.iconic); await sleep(300); }
+  let commonName = ev.species_common || '';
+  if (!taxonId) {
+    const r = await resolveTaxon(ev.taxon, cat.iconic);
+    await sleep(300);
+    if (!r) return null;                  // no same-class match → reject
+    taxonId = r.id; commonName = r.common;
+  }
+  if (!commonName) commonName = ev.taxon; // last-ditch label source
 
   // Claim 3 (attempt A) — local iNat timing.
-  let inatLocalTotal = 0;
-  let verifiedWindow = null;
-  if (taxonId) {
-    const counts = await fetchTimedHistogram(taxonId, lat, lon, ev.event_type);
-    await sleep(300);
-    inatLocalTotal = counts ? sum(counts) : 0;
-    if (inatLocalTotal >= MIN_OBS) {
-      if (!ctx.baseline) { ctx.baseline = await fetchBaseline(cat.iconic, lat, lon); await sleep(300); }
-      const corrected = biasCorrect(counts, ctx.baseline);
-      const w = windowFromWeeks(corrected, ev.event_type);
-      if (w.widthWeeks <= MAX_SEASON_WEEKS) verifiedWindow = w; // clear season
+  const counts = await fetchTimedHistogram(taxonId, lat, lon, ev.event_type);
+  await sleep(300);
+  const inatLocalTotal = counts ? sum(counts) : 0;
+
+  if (inatLocalTotal >= MIN_OBS) {
+    if (!ctx.baseline) { ctx.baseline = await fetchBaseline(cat.iconic, lat, lon); await sleep(300); }
+    const w = windowFromWeeks(biasCorrect(counts, ctx.baseline), ev.event_type);
+    if (w.widthWeeks <= MAX_SEASON_WEEKS) {  // a clear season → VERIFIED
+      return record(ev, cat, taxonId, commonName, w,
+        { verified: true, confidence: 'verified', source: 'inat', obs_total: inatLocalTotal });
     }
+    // else: observed ~year-round → no real season; fall through (usually dropped)
   }
 
-  // GBIF cross-check / occurrence data (shared by both tiers).
-  const gbif = await fetchGbif(ev.taxon, lat, lon);
-  await sleep(200);
-  const gbifTiming = gbif && gbif.total >= 30;
+  // CORROBORATED path — real, class-correct species that iNat can't clearly time.
+  const occurs = inatLocalTotal >= MIN_LOCAL || (cat.id === 'birds' && ebirdSupports(ctx.ebird, ev));
+  if (!occurs) return null;                          // doesn't really occur here
 
-  if (verifiedWindow) {
-    let verified = true, confidence = 'verified', source = 'inat';
-    if (gbifTiming) {
-      const inatMonth = doyToMonth(verifiedWindow.peakDOY);
-      const gbifPeak = circularPeakWindow(gbif.months).peak + 1;
-      if (monthDist(inatMonth, gbifPeak) > 2) { verified = false; confidence = 'corroborated'; } // sources disagree
-    }
-    return record(ev, cat, taxonId, verifiedWindow, {
-      verified, confidence, source, obs_total: inatLocalTotal,
-    });
+  const behaviorOK = corroborateBehavior(await fetchWikiExtract(commonName || ev.taxon), ev.event_type);
+  await sleep(200);
+  if (behaviorOK !== true) return null;              // require positive support
+
+  // Timing WITHOUT GBIF: prefer the sparse iNat histogram when narrow enough, else
+  // the LLM's month hint. Reject anything wider than a season.
+  let window = null, source = 'llm';
+  if (inatLocalTotal >= MIN_CORR_OBS) {
+    const w = windowFromWeeks(counts, ev.event_type);
+    if (w.widthWeeks <= MAX_SEASON_WEEKS) { window = w; source = 'inat'; }
   }
+  if (!window) window = windowFromMonthRange(ev.expected_months, ev.event_type);
+  if (!window || doySpan(window.startDOY, window.endDOY) > MAX_WINDOW_DAYS) return null;
 
-  // Claim 1 (gate) — does it really occur here? Reject pure hallucinations.
-  const occurrenceOK = (gbif && gbif.total >= MIN_REGIONAL)
-    || inatLocalTotal >= MIN_LOCAL
-    || (cat.id === 'birds' && ebirdSupports(ctx.ebird, ev));
-  if (!occurrenceOK) return null;
-
-  // Claim 2 — is the behaviour real for this taxon? Needs independent support:
-  // an encyclopedia trait match, or a data-backed GBIF season. LLM-only claims die.
-  const behaviorOK = corroborateBehavior(await fetchWikiExtract(ev.taxon), ev.event_type);
-  await sleep(200);
-  if (!(behaviorOK === true || gbifTiming)) return null;
-
-  // Claim 3 (attempt B) — timing from GBIF where we have it, else the LLM guess.
-  const window = gbifTiming
-    ? windowFromMonths(gbif.months, ev.event_type)
-    : windowFromMonthRange(ev.expected_months, ev.event_type);
-  if (!window) return null;
-
-  return record(ev, cat, taxonId, window, {
-    verified: false,
-    confidence: 'corroborated',
-    source: gbifTiming ? 'gbif' : 'llm',
-    obs_total: gbif?.total ?? MIN_LOCAL,
-  });
+  return record(ev, cat, taxonId, commonName, window,
+    { verified: false, confidence: 'corroborated', source, obs_total: inatLocalTotal || MIN_LOCAL });
 }
 
-/** Assemble the internal event record from a proposal + window + tier metadata. */
-function record(ev, cat, taxonId, window, meta) {
+/** Assemble the internal event record; the label is composed from the species. */
+function record(ev, cat, taxonId, commonName, window, meta) {
   return {
-    label: ev.common_name,
+    label: composeLabel(commonName, ev.event_type),
     startDOY: Math.round(window.startDOY),
     peakDOY: Math.round(window.peakDOY),
     endDOY: Math.round(window.endDOY),
@@ -638,7 +607,7 @@ function record(ev, cat, taxonId, window, meta) {
 const tierRank = e => (e.confidence === 'verified' ? 2 : 1);
 
 /** Propose (both lanes) → anchor → tier one category, returning its kept events. */
-async function buildCategory(cat, facts, lat, lon, llm) {
+async function buildCategory(cat, facts, lat, lon, llm, seenTaxa) {
   const real = await fetchSpeciesCounts(lat, lon, cat.iconic);
   await sleep(400);
   const dataProps = await proposeFromRealSpecies(cat, facts, real, llm);
@@ -649,13 +618,12 @@ async function buildCategory(cat, facts, lat, lon, llm) {
   const ctx = { baseline: null, ebird: cat.id === 'birds' ? await fetchEbirdNearby(lat, lon) : null };
 
   const anchored = [];
-  // Drop events that resolve to a taxon already kept this category (the LLM often
-  // proposes two events for one species), keeping the first.
-  const seenTaxa = new Set();
+  // `seenTaxa` is shared across ALL categories for this location, so a charismatic
+  // species (e.g. a whale) anchored under its correct class can't reappear in
+  // another category, and the LLM proposing one species twice is collapsed.
   for (const ev of proposed) {
     const a = await anchorEvent(ev, lat, lon, cat, ctx);
-    const key = a ? (a.taxon_id ?? a.label?.toLowerCase()) : null;
-    if (a && key && !seenTaxa.has(key)) { seenTaxa.add(key); anchored.push(a); }
+    if (a && a.taxon_id && !seenTaxa.has(a.taxon_id)) { seenTaxa.add(a.taxon_id); anchored.push(a); }
     await sleep(700); // be polite to iNaturalist (~60 req/min)
   }
 
@@ -715,9 +683,10 @@ async function build(key, facts, force, opts, emit) {
 
     const events = [];
     const debug = { facts, categories: {} };
+    const seenTaxa = new Set(); // shared across categories → no cross-category dupes
     // Compute one category at a time and emit each the moment it is ready.
     for (const cat of CATEGORIES) {
-      const built = await buildCategory(cat, facts, lat, lon, llm);
+      const built = await buildCategory(cat, facts, lat, lon, llm, seenTaxa);
       events.push(...built.events);
       debug.categories[cat.id] = { proposed: built.proposed, anchored: built.anchored };
       if (emit) emit(cat.id, built.events);
