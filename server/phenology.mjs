@@ -707,6 +707,9 @@ async function build(key, facts, force, opts, emit) {
   }
 
   const work = (async () => {
+    // 8 GB Mac mini: free the image generator's RAM before we hit Ollama. Only on
+    // this real-generation path — cache hits above replay without touching the LLM.
+    await opts.freeRam?.();
     const llm = { ollamaUrl: opts.ollamaUrl, model: opts.model };
     const lat = facts?.lat ?? 0, lon = facts?.lon ?? 0;
 
@@ -734,7 +737,10 @@ async function build(key, facts, force, opts, emit) {
 }
 
 /**
- * Handle a /phenology request. `opts`: { force, cacheDir, ollamaUrl, model }.
+ * Handle a /phenology request. `opts`: { force, cacheDir, ollamaUrl, model,
+ * freeRam? } — `freeRam` is an optional async hook the caller uses to evict the
+ * image generator's RAM before the (Ollama-heavy) build runs; it fires only on a
+ * real generation, never on a cache replay.
  * `emit(category, events)` is called once per category as it becomes ready (and
  * is replayed from cache on a hit) so the caller can stream results to the
  * client. Never throws on upstream failure — returns { events: [] } so the band

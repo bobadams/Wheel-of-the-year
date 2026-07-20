@@ -332,16 +332,25 @@ The first new-city request after idle therefore waits ~1–3 min for Forge to bo
 
 ### Memory: Forge and Ollama take turns (8 GB Mac mini)
 The Mac mini has only **8 GB RAM**, so Forge (~4–6 GB with `--no-half`) and Ollama
-(`llama3.2:3b`, ~2.5–3 GB) must not co-reside. The image service enforces this:
-- **LLM unloaded immediately after prompting** — the Ollama call passes
-  `keep_alive: 0`, so llama frees its RAM before Forge loads its larger model.
+(`llama3.2:3b`, ~2.5–3 GB) must not co-reside. Ollama runs as an always-on daemon
+(`brew services start ollama` → LaunchAgent `homebrew.mxcl.ollama`, RunAtLoad +
+KeepAlive), which is cheap when idle because the *model* is only resident during
+inference. The image service arbitrates the RAM around that:
+- **LLM unloaded immediately after prompting** — every Ollama call passes
+  `keep_alive: 0`, so llama frees its model RAM before Forge loads its larger one.
+- **Forge evicted before any Ollama inference** — `freeRamForOllama()` kills a warm
+  Forge right before the LLM is used (image-prompt composition *and*, via the
+  `freeRam` opt, phenology's proposal calls), so the model always has room. It's a
+  no-op when Forge is down, and phenology only invokes it on a real generation, not
+  a cache replay. Forge reboots on demand for the next image.
 - **Forge shut down when idle** — after `FORGE_IDLE_TIMEOUT` (default 600s / 10 min)
   with no generations, `shutdownForge()` kills the process on the Forge port
   (`lsof -ti :PORT | xargs kill -9`), returning RAM to Ollama / the astrology site.
   A burst of city-loads reuses the warm Forge; the timer re-arms after each one.
+  (Both idle teardown and pre-Ollama eviction share the `killForge()` helper.)
 
-Net: Ollama is the always-available default; Forge is a transient guest that
-boots on demand, frees Ollama's RAM while rendering, and evicts itself when done.
+Net: Ollama is the always-on default; Forge is a transient guest that boots on
+demand, is evicted whenever the LLM needs RAM, and also evicts itself when idle.
 
 Local dev: set `VITE_IMAGE_URL=http://macmini.local:7871` in `.env.local` to hit
 the service directly (it sends permissive CORS headers); otherwise the

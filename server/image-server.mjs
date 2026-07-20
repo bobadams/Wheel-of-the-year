@@ -185,6 +185,8 @@ async function composeScene(facts) {
   ].filter(Boolean).join('\n');
 
   try {
+    // 8 GB: evict a warm Forge before loading the LLM (see freeRamForOllama).
+    await freeRamForOllama();
     const res = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -304,18 +306,38 @@ async function ensureForge() {
   await forgeBoot;
 }
 
-// ── Idle teardown ─────────────────────────────────────────────────────────────
+// ── Idle teardown + RAM arbitration ───────────────────────────────────────────
+// The Mac mini has only 8 GB, so Forge (~4-6 GB warm) and an Ollama model load
+// (~3 GB) cannot co-reside. Forge is evicted both when it goes idle AND right
+// before any Ollama inference (freeRamForOllama), so the LLM always has room;
+// Forge simply reboots on demand for the next image request.
 let forgeIdleTimer = null;
 
-/** Kill whatever process owns the Forge port, freeing its RAM for Ollama. */
-function shutdownForge() {
-  forgeIdleTimer = null;
+/** Kill whatever process owns the Forge port, freeing its RAM. */
+function killForge(reason) {
+  if (forgeIdleTimer) { clearTimeout(forgeIdleTimer); forgeIdleTimer = null; }
   // `lsof -ti :7860 | xargs kill -9` — resolve PID(s) on the Forge port and kill.
   const port = new URL(FORGE_URL).port || '7860';
   execFile('bash', ['-lc', `lsof -ti :${port} | xargs -r kill -9`], err => {
     if (err) console.warn('[image-server] Forge shutdown failed:', err.message);
-    else console.log(`[image-server] Forge idle for ${Math.round(FORGE_IDLE_TIMEOUT / 1000)}s — shut down to free RAM`);
+    else console.log(`[image-server] Forge shut down (${reason})`);
   });
+}
+
+/** Idle-timer callback: evict Forge after FORGE_IDLE_TIMEOUT with no generation. */
+function shutdownForge() {
+  killForge(`idle ${Math.round(FORGE_IDLE_TIMEOUT / 1000)}s`);
+}
+
+/**
+ * Evict a warm Forge before an Ollama inference so the LLM model has RAM (they
+ * cannot co-reside in 8 GB). No-op when Forge isn't running; otherwise kills it
+ * and waits briefly for the OS to reclaim the pages before the model loads.
+ */
+async function freeRamForOllama() {
+  if (!(await forgeReady())) return;
+  killForge('freeing RAM for an Ollama call');
+  await sleep(1500);
 }
 
 /** (Re)arm the idle timer; called after every generation finishes. */
@@ -445,6 +467,7 @@ const server = http.createServer(async (req, res) => {
       };
       await handlePhenology(sanitizeKey(key), facts, {
         force: !!force, cacheDir: CACHE_DIR, ollamaUrl: OLLAMA_URL, model: OLLAMA_MODEL,
+        freeRam: freeRamForOllama, // evict a warm Forge before phenology's LLM calls
       }, emit);
       res.end();
     } catch (e) {
