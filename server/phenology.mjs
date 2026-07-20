@@ -130,10 +130,17 @@ function eventNoun(category, type, behaviorOK) {
   if (SPECIFIC_NOUN[type]) return behaviorOK === true ? SPECIFIC_NOUN[type] : 'season';
   return 'season'; // 'arrival' / 'other' → general presence
 }
-function composeLabel(commonName, noun) {
+function composeLabel(commonName, noun, max = 32) {
   const name = String(commonName || '').trim();
   if (!name) return '';
-  return `${name} ${noun}`;
+  if (!noun) return trimLabel(name, max);
+  const full = `${name} ${noun}`;
+  if (full.length <= max) return full;
+  // Too long for the arc: keep the whole event noun, abbreviate the SPECIES name
+  // with an ellipsis (dropping the verb would make it read like a bare label).
+  const room = Math.max(3, max - noun.length - 2); // name + "… " + noun
+  const short = name.slice(0, room).replace(/[\s,–-]+$/, '');
+  return `${short}… ${noun}`;
 }
 
 /** Trim a label to <= max chars on a word boundary (no mid-word cuts). */
@@ -669,7 +676,7 @@ async function buildCategory(cat, facts, lat, lon, llm, seenTaxa) {
   // Keep the strongest three: verified before corroborated, then best-supported.
   anchored.sort((x, y) => (tierRank(y) - tierRank(x)) || ((y.obs_total || 0) - (x.obs_total || 0)));
   const events = anchored.slice(0, 3).map(e => ({
-    label: trimLabel(e.label),
+    label: e.label, // already length-bounded by composeLabel, with the noun kept
     startDOY: e.startDOY,
     peakDOY: e.peakDOY,
     endDOY: e.endDOY,
