@@ -30,8 +30,10 @@
 //       - OBSERVER-BIAS NORMALISATION — divide the taxon's weekly counts by the
 //         whole iconic group's weekly counts, converting "when were people out
 //         with cameras" into "when was THIS species disproportionately seen".
-//       - ONSET vs PEAK — arrival/migration timing uses the rising edge (when the
-//         species shows up), not the observation peak (mid-season presence).
+//       - PEAK-CENTRED — the window is centred on the observation peak, i.e. when
+//         the species is most PRESENT/noticeable, not a technical onset. If a
+//         migrant "arrives" in May but is mostly seen in July, we report July —
+//         the experience a visitor actually has (accuracy over specificity).
 //
 //   STEP 3  CORROBORATE + tier. Every taxon must first resolve within the category's
 //     iconic class (species_counts is already class-filtered; famous-lane names go
@@ -43,9 +45,13 @@
 //     window can be formed from the sparse iNat histogram or the LLM's month hint.
 //     Anything else is REJECTED — precision over recall.
 //
-//     Labels are composed from the resolved species' common name + the event noun
-//     ("California Poppy bloom"), never the LLM's free-text label — the model tends
-//     to emit bare words ("Emergence", "None notable") that this makes impossible.
+//     Labels are composed from the resolved species' common name + a COLLOQUIAL
+//     event noun ("California Poppy bloom"), never the LLM's free-text label — the
+//     model tends to emit bare words ("Emergence", "None notable") that this makes
+//     impossible. A specific animal verb (migration/breeding/emergence) is used
+//     only when Wikipedia corroborates that behaviour for the taxon; otherwise (and
+//     for a bird that merely "arrives", or a plant that isn't blooming) we ZOOM OUT
+//     to the general "<species> season" a person would say — accurate, not clinical.
 //
 //   STEP 4  OCCURRENCE (birds). An optional eBird nearby-observations call (env
 //     EBIRD_API_KEY) strengthens the birds occurrence gate. NOTE: GBIF was evaluated
@@ -62,7 +68,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 const INAT = 'https://api.inaturalist.org/v1';
-const WIKI = 'https://en.wikipedia.org/api/rest_v1/page/summary';
+const WIKI = 'https://en.wikipedia.org/w/api.php';
 const UA   = 'wheel-of-the-year/1.0';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -114,16 +120,20 @@ const weekToDOY = w => (((w - 1) * 7) % 365 + 365) % 365;
 const doySpan = (a, b) => (b - a + 365) % 365; // forward circular distance, days
 const sum = a => a.reduce((s, v) => s + v, 0);
 
-// Event-type → the noun used to build a clean, species-anchored label. Labels are
-// always "<species common name> <noun>" so the LLM can never emit a bare word.
-const EVENT_NOUN = {
-  bloom: 'bloom', migration: 'migration', arrival: 'arrival',
-  emergence: 'emergence', breeding: 'breeding', other: 'season',
-};
-function composeLabel(commonName, type) {
+// Colloquial event noun for the label. Specific animal verbs survive only when the
+// behaviour is corroborated for the taxon; otherwise — and for 'arrival'/'other',
+// and non-bloom plants — we ZOOM OUT to the general "season" a person would use.
+// Labels are always "<species common name> <noun>", centred on peak observation.
+const SPECIFIC_NOUN = { migration: 'migration', breeding: 'breeding', emergence: 'emergence' };
+function eventNoun(category, type, behaviorOK) {
+  if (category === 'plants') return type === 'bloom' ? 'bloom' : 'season';
+  if (SPECIFIC_NOUN[type]) return behaviorOK === true ? SPECIFIC_NOUN[type] : 'season';
+  return 'season'; // 'arrival' / 'other' → general presence
+}
+function composeLabel(commonName, noun) {
   const name = String(commonName || '').trim();
   if (!name) return '';
-  return `${name} ${EVENT_NOUN[type] || 'season'}`;
+  return `${name} ${noun}`;
 }
 
 /** Trim a label to <= max chars on a word boundary (no mid-word cuts). */
@@ -324,11 +334,11 @@ function mergeProposals(dataProps, famousProps) {
 // ── Step 2: time against iNaturalist (corrected) ──────────────────────────────
 
 /**
- * Resolve a taxon name to an iNaturalist { id, common }, constrained to `iconic` so
- * a name can't resolve into the wrong category — returns null (event dropped) when
- * no same-class match exists. The /taxa autocomplete ignores its own iconic filter,
- * so we check each candidate's iconic_taxon_name ourselves. The common name feeds
- * the composed event label.
+ * Resolve a taxon name to an iNaturalist { id, common, scientific }, constrained to
+ * `iconic` (right class) AND to SPECIES rank or below (rank_level <= 10) so a name
+ * can't resolve to a whole family — e.g. "hawks" → Accipitridae with 100k+ records
+ * and no real season. Returns null (event dropped) when no such match exists. The
+ * /taxa autocomplete ignores its own iconic filter, so we check candidates ourselves.
  */
 async function resolveTaxon(taxon, iconic) {
   try {
@@ -337,9 +347,14 @@ async function resolveTaxon(taxon, iconic) {
     if (!res.ok) return null;
     const json = await res.json();
     const results = json.results || [];
-    const match = iconic ? results.find(r => r.iconic_taxon_name === iconic) : results[0];
+    const match = results.find(r =>
+      (!iconic || r.iconic_taxon_name === iconic) && r.rank_level && r.rank_level <= 10);
     if (!match) return null;
-    return { id: match.id, common: match.preferred_common_name || match.name || taxon };
+    return {
+      id: match.id,
+      common: match.preferred_common_name || match.name || taxon,
+      scientific: match.name || taxon,   // used for the (disambiguated) Wikipedia lookup
+    };
   } catch { return null; }
 }
 
@@ -418,28 +433,26 @@ function circularPeakWindow(arr) {
 }
 
 /**
- * Turn a weekly signal into a DOY window. Arrival/migration events report the
- * RISING EDGE (start→peak, labelled at onset) — that's when the species shows up.
- * Everything else reports the season around the peak (labelled at peak).
+ * Turn a weekly signal into a DOY window, centred on the observation PEAK (when the
+ * species is most present/noticeable). The arc spans the half-max season; the label
+ * sits at the peak — the experience a visitor has, not a technical onset.
  */
-function windowFromWeeks(counts, type) {
+function windowFromWeeks(counts) {
   const w = circularPeakWindow(counts);
-  const onset = type === 'arrival' || type === 'migration';
-  const startW = w.start + 1, peakW = w.peak + 1, endW = w.end + 1;
-  if (onset) {
-    const end = startW === peakW ? endW : peakW;
-    return { startDOY: weekToDOY(startW), peakDOY: weekToDOY(startW), endDOY: weekToDOY(end), widthWeeks: w.width };
-  }
-  return { startDOY: weekToDOY(startW), peakDOY: weekToDOY(peakW), endDOY: weekToDOY(endW), widthWeeks: w.width };
+  return {
+    startDOY: weekToDOY(w.start + 1),
+    peakDOY:  weekToDOY(w.peak + 1),
+    endDOY:   weekToDOY(w.end + 1),
+    widthWeeks: w.width,
+  };
 }
 
 /** Turn an LLM [startMonth, endMonth] guess into a DOY window (last resort). */
-function windowFromMonthRange(months, type) {
+function windowFromMonthRange(months) {
   if (!months) return null;
   const [a, b] = months;
-  const onset = type === 'arrival' || type === 'migration';
-  const mid = a === b ? a : (a + Math.round((((b - a + 12) % 12)) / 2) - 1 + 12) % 12 + 1;
-  return { startDOY: monthMidDOY(a), peakDOY: monthMidDOY(onset ? a : mid), endDOY: monthMidDOY(b) };
+  const mid = a === b ? a : (a + Math.round(((b - a + 12) % 12) / 2) - 1 + 12) % 12 + 1;
+  return { startDOY: monthMidDOY(a), peakDOY: monthMidDOY(mid), endDOY: monthMidDOY(b) };
 }
 
 /**
@@ -473,14 +486,21 @@ const BEHAVIOR_RE = {
   other:     /./,
 };
 
-/** Wikipedia summary extract for a name, lowercased, or '' on any miss. */
+/**
+ * Wikipedia LEAD-SECTION plaintext for a name (redirects followed so a scientific
+ * name lands on the species article), lowercased, or '' on any miss. The lead
+ * section — not the REST one-sentence summary — is what reliably describes what a
+ * species DOES (migration, breeding), so the behaviour check can corroborate it.
+ */
 async function fetchWikiExtract(name) {
   try {
-    const res = await fetch(`${WIKI}/${encodeURIComponent(String(name).replace(/ /g, '_'))}`,
-      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
+    const u = `${WIKI}?action=query&format=json&prop=extracts&exintro=1&explaintext=1`
+            + `&redirects=1&titles=${encodeURIComponent(String(name).replace(/ /g, '_'))}`;
+    const res = await fetch(u, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
     if (!res.ok) return '';
     const json = await res.json();
-    return String(json.extract || '').toLowerCase();
+    const first = Object.values(json?.query?.pages || {})[0];
+    return String(first?.extract || '').toLowerCase();
   } catch { return ''; }
 }
 
@@ -543,11 +563,12 @@ async function anchorEvent(ev, lat, lon, cat, ctx) {
   // the category's iconic class (this is what stops whales landing under "fish").
   let taxonId = ev.taxon_id ?? null;
   let commonName = ev.species_common || '';
+  let sciName = ev.taxon;                  // data lane: scientific name from species_counts
   if (!taxonId) {
     const r = await resolveTaxon(ev.taxon, cat.iconic);
     await sleep(300);
     if (!r) return null;                  // no same-class match → reject
-    taxonId = r.id; commonName = r.common;
+    taxonId = r.id; commonName = r.common; sciName = r.scientific;
   }
   if (!commonName) commonName = ev.taxon; // last-ditch label source
 
@@ -558,9 +579,12 @@ async function anchorEvent(ev, lat, lon, cat, ctx) {
 
   if (inatLocalTotal >= MIN_OBS) {
     if (!ctx.baseline) { ctx.baseline = await fetchBaseline(cat.iconic, lat, lon); await sleep(300); }
-    const w = windowFromWeeks(biasCorrect(counts, ctx.baseline), ev.event_type);
+    const w = windowFromWeeks(biasCorrect(counts, ctx.baseline));
     if (w.widthWeeks <= MAX_SEASON_WEEKS) {  // a clear season → VERIFIED
-      return record(ev, cat, taxonId, commonName, w,
+      // Keep the LLM's specific verb only if Wikipedia backs it for this taxon;
+      // otherwise zoom out to the colloquial "season" (accuracy over specificity).
+      const noun = await eventNounFor(cat, ev, sciName);
+      return record(ev, cat, taxonId, commonName, noun, w,
         { verified: true, confidence: 'verified', source: 'inat', obs_total: inatLocalTotal });
     }
     // else: observed ~year-round → no real season; fall through (usually dropped)
@@ -570,7 +594,7 @@ async function anchorEvent(ev, lat, lon, cat, ctx) {
   const occurs = inatLocalTotal >= MIN_LOCAL || (cat.id === 'birds' && ebirdSupports(ctx.ebird, ev));
   if (!occurs) return null;                          // doesn't really occur here
 
-  const behaviorOK = corroborateBehavior(await fetchWikiExtract(commonName || ev.taxon), ev.event_type);
+  const behaviorOK = corroborateBehavior(await fetchWikiExtract(sciName), ev.event_type);
   await sleep(200);
   if (behaviorOK !== true) return null;              // require positive support
 
@@ -578,20 +602,35 @@ async function anchorEvent(ev, lat, lon, cat, ctx) {
   // the LLM's month hint. Reject anything wider than a season.
   let window = null, source = 'llm';
   if (inatLocalTotal >= MIN_CORR_OBS) {
-    const w = windowFromWeeks(counts, ev.event_type);
+    const w = windowFromWeeks(counts);
     if (w.widthWeeks <= MAX_SEASON_WEEKS) { window = w; source = 'inat'; }
   }
-  if (!window) window = windowFromMonthRange(ev.expected_months, ev.event_type);
+  if (!window) window = windowFromMonthRange(ev.expected_months);
   if (!window || doySpan(window.startDOY, window.endDOY) > MAX_WINDOW_DAYS) return null;
 
-  return record(ev, cat, taxonId, commonName, window,
+  const noun = eventNoun(cat.id, ev.event_type, behaviorOK); // behaviour already checked above
+  return record(ev, cat, taxonId, commonName, noun, window,
     { verified: false, confidence: 'corroborated', source, obs_total: inatLocalTotal || MIN_LOCAL });
 }
 
+/**
+ * Resolve the colloquial event noun for the VERIFIED lane. Only pays for a
+ * Wikipedia lookup when the LLM proposed a specific animal verb that could be
+ * wrong; plants and generic ('arrival'/'other') types never need one.
+ */
+async function eventNounFor(cat, ev, sciName) {
+  if (cat.id === 'plants' || !SPECIFIC_NOUN[ev.event_type]) {
+    return eventNoun(cat.id, ev.event_type, null);
+  }
+  const ok = corroborateBehavior(await fetchWikiExtract(sciName), ev.event_type);
+  await sleep(200);
+  return eventNoun(cat.id, ev.event_type, ok);
+}
+
 /** Assemble the internal event record; the label is composed from the species. */
-function record(ev, cat, taxonId, commonName, window, meta) {
+function record(ev, cat, taxonId, commonName, noun, window, meta) {
   return {
-    label: composeLabel(commonName, ev.event_type),
+    label: composeLabel(commonName, noun),
     startDOY: Math.round(window.startDOY),
     peakDOY: Math.round(window.peakDOY),
     endDOY: Math.round(window.endDOY),
