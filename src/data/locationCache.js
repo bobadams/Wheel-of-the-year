@@ -15,6 +15,14 @@
 //             visits accumulate. `newestDate` gives the client a `since` to hand
 //             the fetchers, which then ask upstream only for the days after it.
 //
+//   baseline — raw MODIS composites (also date-keyed) plus the ids of the
+//             batches already fetched. Field-by-field repair works for the
+//             *stages* of a load, but EVI is one stage that takes ~30 calls and
+//             a couple of minutes; without this, closing the tab at 90% threw
+//             all of it away and the next visit started from zero. These dates
+//             are historical (2013–2022), so unlike actuals they are never
+//             pruned.
+//
 // Reached through nginx at `/wheel-images/climate`. In local dev, set
 // VITE_IMAGE_URL=http://macmini.local:7871 in .env.local to hit the service
 // directly; without it every call here fails softly and the app just refetches
@@ -33,6 +41,11 @@ export const NORMAL_SERIES = ['temp', 'rain', 'daylight', 'wind', 'windDir', 'sn
 export const ACTUAL_SERIES = ['temp', 'rain', 'wind', 'snow', 'cloud', 'evi', 'pm25', 'visibility'];
 
 const NORMAL_SCALARS = ['resolution', 'eviSource', 'eviSampLat', 'eviSampLon', 'eviSampMapUrl', 'eviPeakKey', 'eviTroughKey'];
+
+// How many completed EVI batches to accumulate before persisting them. One POST
+// per batch would be ~30 read-modify-writes of the record for a single load;
+// five keeps the wasted work on an interrupted visit under a handful of calls.
+const EVI_FLUSH_EVERY = 5;
 
 /**
  * Stable cache key for a location — slugified name, else rounded lat/lon. Shared
@@ -162,6 +175,32 @@ export function normalsFromData(data, keys) {
     if (Object.keys(meta).length) out.meta = meta;
   }
   return out;
+}
+
+/**
+ * Collects completed MODIS batches and flushes them to the server every
+ * EVI_FLUSH_EVERY, plus once at the end. Returns { onBatch, flush }: hand
+ * `onBatch` to fetchModisEVI and await `flush` when it returns.
+ */
+export function eviProgressRecorder(record) {
+  let samples = {}, ids = [], pending = 0;
+
+  const flush = () => {
+    if (!pending) return;
+    record({ baseline: { evi: samples, eviDoneKeys: ids } });
+    samples = {}; ids = []; pending = 0;
+  };
+
+  return {
+    flush,
+    onBatch({ id, samples: batch }) {
+      for (const e of batch ?? []) {
+        if (e?.date && Number.isFinite(e.value)) samples[e.date] = e.value;
+      }
+      ids.push(id);        // recorded even when the batch came back empty
+      if (++pending >= EVI_FLUSH_EVERY) flush();
+    },
+  };
 }
 
 // ── Transport ────────────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ import { showRingChart } from './ui/ringChart.js';
 import {
   locationKey, loadLocationCache, saveLocationCache,
   hasSeries, newestDate, daysSince, actualsForDisplay, mergeActuals,
-  entriesToDates, normalsFromData, isSamePlace, coordSuffix,
+  entriesToDates, normalsFromData, isSamePlace, coordSuffix, eviProgressRecorder,
 } from './data/locationCache.js';
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
@@ -209,12 +209,36 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
     setStatus('loading', `${name} — fetching MODIS vegetation history (slowest step)…`);
     setEviProgress(true, 0, 'Fetching MODIS satellite data…');
     let evi = null, sampLat = lat, sampLon = lon, sampMapUrl = null, peakKey = null, troughKey = null;
+    let complete = false;
+    // Resume rather than restart: this fetch is ~30 MODIS calls, and a visit
+    // closed partway through has already banked the batches it finished.
+    const progress = eviProgressRecorder(record);
     try {
-      ({ evi, sampLat, sampLon, sampMapUrl, peakKey, troughKey } =
-        await fetchModisEVI(lat, lon, pct => setEviProgress(true, pct, `MODIS EVI: ${pct}%…`)));
+      ({ evi, sampLat, sampLon, sampMapUrl, peakKey, troughKey, complete } =
+        await fetchModisEVI(lat, lon, pct => setEviProgress(true, pct, `MODIS EVI: ${pct}%…`), {
+          have:     cached?.baseline?.evi,
+          doneKeys: cached?.baseline?.eviDoneKeys ?? [],
+          // The pixel a previous visit picked. Reusing it skips the search and
+          // keeps every stored composite comparable with the new ones.
+          sample: {
+            lat: cached?.normals?.eviSampLat, lon: cached?.normals?.eviSampLon,
+            peakKey: cached?.normals?.eviPeakKey, troughKey: cached?.normals?.eviTroughKey,
+          },
+          // Record the chosen pixel up front, so an interrupted visit doesn't
+          // leave the next one with composites it can't attribute to a pixel.
+          onSample: s => record({
+            normals: {
+              eviSampLat: s.sampLat, eviSampLon: s.sampLon,
+              ...(s.peakKey   ? { eviPeakKey:   s.peakKey }   : {}),
+              ...(s.troughKey ? { eviTroughKey: s.troughKey } : {}),
+            },
+          }),
+          onBatch: progress.onBatch,
+        }));
     } catch {
       evi = eviProxyFallback(currentData.temp, currentData.rain);
     }
+    progress.flush();
     setEviProgress(false);
     if (stale()) return;
     const real = !!sampMapUrl; // only a genuine MODIS result carries a sample point
@@ -232,9 +256,14 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
     });
     refreshSourceBadges();
     draw();
-    // The proxy is a stand-in for a failed fetch, not data — leaving it unrecorded
-    // is what lets the next visit try MODIS again.
-    if (real) {
+    // Two things are deliberately not recorded as a normal:
+    //   · the proxy — a stand-in for a failed fetch, not data. Leaving it out is
+    //     what lets the next visit try MODIS again.
+    //   · a curve built from an incomplete baseline — the raw composites are
+    //     already banked, so the next visit fetches only the missing batches and
+    //     stores the finished curve then. Storing it now would freeze a partial
+    //     year in place, since nothing refetches a normal once it exists.
+    if (real && complete) {
       record({ normals: normalsFromData(currentData, ['evi', 'eviSampLat', 'eviSampLon', 'eviSampMapUrl', 'eviPeakKey', 'eviTroughKey', 'eviSource']) });
     }
   }

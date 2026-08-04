@@ -149,7 +149,8 @@ export async function fetchRecentEVI(lat, lon, since) {
     const yearDates = yearGroups[g];
     for (let i = 0; i < yearDates.length; i += 10) {
       const b = yearDates.slice(i, i + 10);
-      try { results.push(...await fetchModisBatch(lat, lon, b[0], b[b.length - 1])); }
+      // null = the request failed (as opposed to an empty but valid answer).
+      try { results.push(...(await fetchModisBatch(lat, lon, b[0], b[b.length - 1]) ?? [])); }
       catch (e) { console.warn('Recent EVI batch failed', e); }
       if (i + 10 < yearDates.length) await new Promise(res => setTimeout(res, 120));
     }

@@ -106,7 +106,9 @@ scratch every single visit).
 
 The nginx block now sends `Cache-Control: no-cache` for everything under
 `/wheel/` and `immutable` for `/wheel/assets/` — the entry point revalidates each
-load, the hashed assets are still cached hard. Two things to remember:
+load, the hashed assets are still cached hard. **`/astrology/` has the same pair
+of headers**, since it is also a Vite build with hashed bundles. Two things to
+remember:
 
 - **A browser already holding a stale copy needs one hard reload** (⇧⌘R). The
   header only governs copies fetched after it was added.
@@ -473,6 +475,7 @@ halves, and the difference between them is the whole design:
 |---|---|---|
 | `normals` | 365-point arrays, one per ring | Each comes from a **fixed historical window** (ERA5 1991–2020, MODIS EVI 2013–2022, CAMS PM2.5 2014–2023, ERA5 visibility 2010–2020), so a stored one is **never** refetched. |
 | `actuals` | **date-keyed** maps, `{ '2026-08-04': 72.1 }` | Topped up incrementally: the client reads the newest stored date and asks upstream only for the days after it (less a 3-day overlap, since the tail of a reanalysis archive is provisional). |
+| `baseline` | date-keyed raw MODIS composites + `eviDoneKeys` | Working state for the one stage too slow to be atomic — see below. Historical dates, so **never pruned**. |
 
 Storing actuals by calendar date rather than day-of-year is what makes the
 top-up possible — DOY collapses years together and can't tell you where you left
@@ -486,6 +489,32 @@ than one write at the end. So a visit abandoned mid-EVI still leaves its normals
 and weather actuals on the server, and the next visit fetches only the gap. This
 is also why a failed EVI fetch's **proxy fallback is deliberately not recorded** —
 leaving the slot empty is what makes the next visit retry MODIS.
+
+**EVI resumes mid-stage, because one stage is too slow to be atomic.** Per-stage
+patches repair a visit at stage granularity, which is enough for every stage but
+one: the EVI baseline is ~30 MODIS calls over a couple of minutes, so closing the
+tab at 90% used to discard all of it. It now checkpoints *within* the stage:
+
+- `fetchModisEVI` takes `have` / `doneKeys` and fetches only the batches missing,
+  reporting progress from the banked percentage rather than 0%.
+- `eviProgressRecorder` (in `locationCache.js`) POSTs every `EVI_FLUSH_EVERY`
+  batches, so an abandoned visit loses at most a few calls.
+- The **sample pixel is recorded before the fetch**, not after. Composites are
+  only comparable within one 250 m pixel, so a resumed visit must reuse the pixel
+  the first one chose — recording it up front is what makes the banked composites
+  attributable. It also skips the pixel search on resume.
+- `eviDoneKeys` tracks batches separately from the composites themselves, because
+  a batch can legitimately return **empty** (cloud, water, masked pixels). Without
+  it, such a batch would look unfetched forever.
+- `fetchModisBatch` returns `null` for a *failed request* and `[]` for a valid
+  empty answer. Only the empty answer is banked as done — a network blip is
+  retried next visit instead of being frozen into the record as a permanent gap.
+- The 365-point curve is stored as a normal **only when every batch is accounted
+  for**. Nothing ever refetches a normal that exists, so storing a partial curve
+  would freeze an incomplete year in place.
+
+Net: three interrupted visits now cost about as many MODIS calls as one complete
+one, and a revisit makes a single call (the composite-freshness check).
 
 Typical effect on a revisit: the 350-day weather window becomes a ~4-day
 request, MODIS drops from ~22 subset calls to at most one (composites publish
@@ -561,6 +590,7 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Change the data→color seasonal mapping | `fetch/image.js` (`monthlyConditions`) and `server/image-server.mjs` (`groundColor`, `buildSeasonalInitPNG`) |
 | Change image size / sampler / denoise | `server/image-server.mjs` (`forgeImg2img`, `IMG2IMG_DENOISE`) |
 | Change the little-planet warp | `src/draw/centerImage.js` (`buildLittlePlanet`) |
-| Change what gets cached per location | `src/data/locationCache.js` (`NORMAL_SERIES`, `ACTUAL_SERIES`) **and** `server/climate-cache.mjs` (the same two lists) |
+| Change what gets cached per location | `src/data/locationCache.js` (`NORMAL_SERIES`, `ACTUAL_SERIES`) **and** `server/climate-cache.mjs` (the same two lists, plus `BASELINE_SERIES` / `BASELINE_KEYLISTS`) |
+| Change how often EVI progress is checkpointed | `EVI_FLUSH_EVERY` in `src/data/locationCache.js` |
 | Change the cache top-up / retention windows | `src/fetch/actuals.js` (`WINDOW_DAYS`, `OVERLAP_DAYS`), `server/climate-cache.mjs` (`RETAIN_DAYS`), `locationCache.js` (`DISPLAY_DAYS`) |
 | Add a stage to the location load | `loadLocation()` in `src/main.js` — paint it, then `record()` its own patch |

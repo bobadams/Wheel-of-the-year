@@ -19,7 +19,7 @@ export async function fetchAnnualSeries(lat, lon, year = 2022, km = 0) {
   const start = modisJulianKey(year, 1);
   const end   = modisJulianKey(year, 353);
   try {
-    return await fetchModisBatch(lat, lon, start, end, km);
+    return await fetchModisBatch(lat, lon, start, end, km) ?? [];
   } catch {
     return [];
   }
@@ -27,13 +27,20 @@ export async function fetchAnnualSeries(lat, lon, year = 2022, km = 0) {
 
 // km: spatial half-extent in km; 0 = single 250m pixel (default, preserves
 // existing behaviour for the 10-year baseline fetch).
+/**
+ * One batch of composites. Returns an array on success — possibly EMPTY, which
+ * is a real answer (cloud, water, masked pixels) — and `null` when the request
+ * itself failed. The baseline fetch relies on that distinction: an empty batch
+ * is banked as done, a failed one is left for the next visit to retry rather
+ * than frozen into the record as a permanent gap.
+ */
 export async function fetchModisBatch(lat, lon, startKey, endKey, km = 0) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${lat}&longitude=${lon}&startDate=${startKey}&endDate=${endKey}`
     + `&kmAboveBelow=${km}&kmLeftRight=${km}`;
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!r.ok) { console.warn('MODIS batch failed', r.status); return []; }
+    if (!r.ok) { console.warn('MODIS batch failed', r.status); return null; }
     const d = await r.json();
     return (d.subset || [])
       .filter(s => s.band === '250m_16_days_EVI')
@@ -45,7 +52,7 @@ export async function fetchModisBatch(lat, lon, startKey, endKey, km = 0) {
       })
       .filter(Boolean);
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -143,38 +150,93 @@ async function findSeasonalPixel(lat, lon) {
   return { lat: latAdj, lon: lonAdj, peakKey, troughKey };
 }
 
-export async function fetchModisEVI(lat, lon, onProgress) {
-  onProgress(0);
-  const { lat: sampLat, lon: sampLon, peakKey, troughKey } = await findSeasonalPixel(lat, lon);
+/** Stable id for one batch of composites, so a finished batch is never refetched. */
+const batchId = (startKey, endKey) => `${startKey}_${endKey}`;
+
+/**
+ * The 10-year EVI baseline for a location.
+ *
+ * This is the slowest fetch in the app — ~30 MODIS calls, a couple of minutes —
+ * so it is built to be RESUMABLE. `opts` carries whatever a previous visit
+ * managed to store:
+ *
+ *   sample    { lat, lon, peakKey, troughKey } — the pixel a previous visit
+ *             chose. Reusing it skips the pixel-grid search AND is what makes
+ *             resuming sound: samples from two different pixels must never be
+ *             averaged together.
+ *   have      { 'YYYY-MM-DD': value } composites already stored.
+ *   doneKeys  ids of batches already completed, so they are skipped outright.
+ *             Tracked separately from `have` because a batch can legitimately
+ *             come back empty (cloud, bad pixels) — without this, such a batch
+ *             would look unfetched forever.
+ *   onSample  called as soon as the pixel is known, so it is recorded before
+ *             the long fetch rather than after it.
+ *   onBatch   called per completed batch with { id, samples } so the caller can
+ *             persist progress mid-flight.
+ *
+ * `complete` in the return says whether every batch is now accounted for — the
+ * caller uses it to decide whether the curve is worth storing as a normal.
+ */
+export async function fetchModisEVI(lat, lon, onProgress, opts = {}) {
+  const { have = null, doneKeys = [], sample = null, onSample = null, onBatch = null } = opts;
 
   // 10-year baseline (2013–2022) at full 16-day composite cadence.
   // Each year produces 3 API calls (batches of 10 DOYs); 10 years = 30 calls total.
+  // Batch ids depend only on the dates, so the work left can be counted before
+  // the pixel is known — a resumed visit opens its bar at the banked percentage
+  // instead of flashing 0%.
   const years = [2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022];
   const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
   const BATCH = 10;
   const CONCURRENCY = 5;
 
-  const tasks = [];
+  const allTasks = [];
   for (const y of years) {
     for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
       const batch = MODIS_DOYS.slice(i, i + BATCH);
-      tasks.push([sampLat, sampLon, modisJulianKey(y, batch[0]), modisJulianKey(y, batch[batch.length - 1])]);
+      const startKey = modisJulianKey(y, batch[0]);
+      const endKey   = modisJulianKey(y, batch[batch.length - 1]);
+      allTasks.push({ startKey, endKey, id: batchId(startKey, endKey) });
     }
   }
-  const total = tasks.length;
-  let done = 0;
+
+  // Start from what is already stored, and fetch only the gaps.
   const results = [];
+  if (have) for (const [date, value] of Object.entries(have)) {
+    if (Number.isFinite(value)) results.push({ date, value });
+  }
+  const already = new Set(doneKeys);
+  const tasks = allTasks.filter(t => !already.has(t.id));
+
+  const total = allTasks.length;
+  let done = total - tasks.length;      // stored batches count toward the bar
+  const fetched = new Set(already);
+  onProgress(Math.round(done / total * 100));
+
+  const reuse = Number.isFinite(sample?.lat) && Number.isFinite(sample?.lon);
+  const { lat: sampLat, lon: sampLon, peakKey, troughKey } = reuse
+    ? { lat: sample.lat, lon: sample.lon, peakKey: sample.peakKey ?? null, troughKey: sample.troughKey ?? null }
+    : await findSeasonalPixel(lat, lon);
+  if (!reuse) onSample?.({ sampLat, sampLon, peakKey, troughKey });
+
   const active = new Set();
-  for (const [la, lo, startKey, endKey] of tasks) {
-    const p = fetchModisBatch(la, lo, startKey, endKey).then(r => {
+  for (const { startKey, endKey, id } of tasks) {
+    const p = fetchModisBatch(sampLat, sampLon, startKey, endKey).then(r => {
       active.delete(p);
-      results.push(...r);
       onProgress(Math.round(++done / total * 100));
+      if (!r) return;                 // request failed — leave it to be retried
+      results.push(...r);
+      fetched.add(id);
+      // Hand the caller this batch the moment it lands. A visit abandoned
+      // mid-fetch then still leaves its progress behind for the next one.
+      onBatch?.({ id, samples: r });
     });
     active.add(p);
     if (active.size >= CONCURRENCY) await Promise.race(active);
   }
   await Promise.all(active);
+
+  const complete = fetched.size >= total;
 
   // Group raw values by DOY across all years for IQR-trimmed averaging.
   // Each composite slot (e.g. Jan 1) gets up to 10 values, one per year.
@@ -231,7 +293,7 @@ export async function fetchModisEVI(lat, lon, onProgress) {
   });
 
   const sampMapUrl = `https://www.google.com/maps?q=${sampLat.toFixed(5)},${sampLon.toFixed(5)}`;
-  return { evi, sampLat, sampLon, sampMapUrl, peakKey, troughKey };
+  return { evi, sampLat, sampLon, sampMapUrl, peakKey, troughKey, complete };
 }
 
 export function eviProxyFallback(tempArr, rainArr) {
