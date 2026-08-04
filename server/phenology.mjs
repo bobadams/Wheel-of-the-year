@@ -66,6 +66,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { llmJSON } from './llm.mjs';
 
 const INAT = 'https://api.inaturalist.org/v1';
 const WIKI = 'https://en.wikipedia.org/w/api.php';
@@ -166,24 +167,9 @@ const inFlight = new Map();
 
 // ── LLM helper ────────────────────────────────────────────────────────────────
 
-/** Call Ollama with JSON-mode output; returns the parsed object or null. */
-async function ollamaJSON(prompt, { ollamaUrl, model, temperature = 0.6 }) {
-  try {
-    const res = await fetch(`${ollamaUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // keep_alive: 0 frees the LLM's RAM immediately (the Mac mini shares 8 GB
-      // with Forge / the astrology site).
-      body: JSON.stringify({ model, prompt, stream: false, format: 'json', keep_alive: 0, options: { temperature } }),
-    });
-    if (!res.ok) throw new Error(`Ollama ${res.status}`);
-    const json = await res.json();
-    return JSON.parse(String(json.response || '').trim());
-  } catch (e) {
-    console.warn('[phenology] Ollama call failed:', e.message);
-    return null;
-  }
-}
+// The LLM lane goes through server/llm.mjs, which picks Claude or the local
+// llama from LLM_PROVIDER. Both return the parsed object, or null on any
+// failure — a null simply means "no proposals from this lane".
 
 // ── Step 1a: retrieve real local species ──────────────────────────────────────
 
@@ -248,7 +234,7 @@ async function proposeFromRealSpecies(cat, facts, species, llm) {
   // lower temperature before giving up, so sparse-region coverage comes from real
   // local species rather than falling through to the (weaker) famous lane.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const obj = await ollamaJSON(prompt, { ...llm, temperature: attempt === 0 ? 0.4 : 0.2 });
+    const obj = await llmJSON(prompt, { ...llm, temperature: attempt === 0 ? 0.4 : 0.2 });
     const list = obj && Array.isArray(obj.events) ? obj.events : Array.isArray(obj) ? obj : [];
     const out = [];
     for (const e of list) {
@@ -309,7 +295,7 @@ async function proposeFamousEvents(cat, facts, llm) {
     'Respond with ONLY JSON of the form {"events": [ ... ]}.',
   ].join('\n');
 
-  const obj = await ollamaJSON(prompt, llm);
+  const obj = await llmJSON(prompt, llm);
   const list = obj && Array.isArray(obj.events) ? obj.events : Array.isArray(obj) ? obj : [];
   return list
     .map(e => ({
@@ -721,10 +707,13 @@ async function build(key, facts, force, opts, emit) {
   }
 
   const work = (async () => {
-    // 8 GB Mac mini: free the image generator's RAM before we hit Ollama. Only on
-    // this real-generation path — cache hits above replay without touching the LLM.
-    await opts.freeRam?.();
-    const llm = { ollamaUrl: opts.ollamaUrl, model: opts.model };
+    // The Ollama settings and the 8 GB Mac mini's free-the-RAM hook ride along
+    // with every LLM call; llm.mjs uses them only when a call actually lands on
+    // the local model. Cache hits above never get here — they replay without
+    // touching the LLM at all.
+    const llm = {
+      ollamaUrl: opts.ollamaUrl, ollamaModel: opts.ollamaModel, freeRam: opts.freeRam,
+    };
     const lat = facts?.lat ?? 0, lon = facts?.lon ?? 0;
 
     const events = [];
@@ -752,10 +741,10 @@ async function build(key, facts, force, opts, emit) {
 }
 
 /**
- * Handle a /phenology request. `opts`: { force, cacheDir, ollamaUrl, model,
- * freeRam? } — `freeRam` is an optional async hook the caller uses to evict the
- * image generator's RAM before the (Ollama-heavy) build runs; it fires only on a
- * real generation, never on a cache replay.
+ * Handle a /phenology request. `opts`: { force, cacheDir, ollamaUrl,
+ * ollamaModel, freeRam? } — `freeRam` is an optional async hook the caller uses
+ * to evict the image generator's RAM before local inference; it fires only when
+ * a call actually reaches the local LLM, never on a cache replay.
  * `emit(category, events)` is called once per category as it becomes ready (and
  * is replayed from cache on a hit) so the caller can stream results to the
  * client. Never throws on upstream failure — returns { events: [] } so the band

@@ -6,21 +6,28 @@
 //
 // POST /generate  { key, facts, force }
 //   - Serves a disk-cached PNG for `key` if present (unless force=true).
-//   - Otherwise: asks Ollama to compose a detailed, location-specific Stable
+//   - Otherwise: asks the LLM to compose a detailed, location-specific Stable
 //     Diffusion prompt from `facts`, runs Forge txt2img, caches the PNG (and the
 //     prompt alongside it for debugging), and returns the PNG.
+//
+// Which LLM answers that (and phenology's proposals) is a switch: LLM_PROVIDER
+// is `anthropic` by default (Claude, using the same key as the astrology site)
+// or `ollama` for the local llama. See server/llm.mjs.
 //
 // It also hosts two sibling per-location caches keyed the same way:
 //   POST /phenology  → server/phenology.mjs   (seasonal wildlife/bloom events)
 //   GET/POST /climate → server/climate-cache.mjs (climate normals + daily actuals)
 //
-// Forge and Ollama are kept from co-residing in RAM (the Mac mini has 8 GB):
-// the LLM is unloaded right after composing the prompt (keep_alive: 0), and
-// Forge is launched on demand and shut down after an idle period.
+// With the local LLM, Forge and Ollama are kept from co-residing in RAM (the
+// Mac mini has 8 GB): the LLM is unloaded right after composing the prompt
+// (keep_alive: 0), and Forge is evicted before inference. On the Anthropic path
+// nothing local is loaded, so that dance is skipped and Forge stays warm. Forge
+// is launched on demand and shut down after an idle period either way.
 //
 // Run:  node server/image-server.mjs
-// Env:  PORT (default 7871), IMAGE_CACHE_DIR, OLLAMA_URL, FORGE_URL, OLLAMA_MODEL,
+// Env:  PORT (default 7871), IMAGE_CACHE_DIR, FORGE_URL,
 //       FORGE_DIR, FORGE_LAUNCH, FORGE_BOOT_TIMEOUT, FORGE_IDLE_TIMEOUT
+//       LLM_PROVIDER, ANTHROPIC_* , OLLAMA_URL, OLLAMA_MODEL (see llm.mjs)
 //       EBIRD_API_KEY (optional; read by phenology.mjs — strengthens the birds
 //       occurrence gate. No-op if unset.)
 
@@ -32,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { handlePhenology } from './phenology.mjs';
 import { readClimateRecord, writeClimateRecord } from './climate-cache.mjs';
+import { llmText, llmProvider } from './llm.mjs';
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
 const HOME        = process.env.HOME ?? '/Users/bradfordadams';
@@ -190,22 +198,16 @@ async function composeScene(facts) {
   ].filter(Boolean).join('\n');
 
   try {
-    // 8 GB: evict a warm Forge before loading the LLM (see freeRamForOllama).
-    await freeRamForOllama();
-    const res = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // keep_alive: 0 frees the LLM's RAM before Forge loads its larger model.
-      body: JSON.stringify({ model: OLLAMA_MODEL, prompt: instruction, stream: false, keep_alive: 0, options: { temperature: 0.7 } }),
-    });
-    if (!res.ok) throw new Error(`Ollama ${res.status}`);
-    const json = await res.json();
-    let body = String(json.response || '').trim().replace(/^["']|["']$/g, '');
+    let body = (await llmText(instruction, {
+      temperature: 0.7,
+      ollamaUrl: OLLAMA_URL, ollamaModel: OLLAMA_MODEL,
+      freeRam: freeRamForOllama, // only fires if the call lands on the local LLM
+    })).replace(/^["']|["']$/g, '');
     body = body.replace(/\b(tiny planet|little planet|stereographic|fisheye|panoramas?|equirectangular|globe|sphere|curved)\b/gi, '')
                .replace(/\s*,\s*,+/g, ', ').replace(/^[,\s]+/, '').trim();
     if (body) return body;
   } catch (e) {
-    console.warn('[image-server] Ollama scene failed, using fallback:', e.message);
+    console.warn('[image-server] scene prompt failed, using fallback:', e.message);
   }
   return `${f.biome ?? 'temperate'} landscape near ${f.name ?? 'a natural region'}, rolling terrain, scattered native trees and shrubs, ground cover, native wildlife`;
 }
@@ -335,9 +337,11 @@ function shutdownForge() {
 }
 
 /**
- * Evict a warm Forge before an Ollama inference so the LLM model has RAM (they
- * cannot co-reside in 8 GB). No-op when Forge isn't running; otherwise kills it
- * and waits briefly for the OS to reclaim the pages before the model loads.
+ * Evict a warm Forge before a local LLM inference so the model has RAM (they
+ * cannot co-reside in 8 GB). Handed to llm.mjs, which fires it only when a call
+ * actually lands on Ollama — on the Anthropic path nothing loads here, so Forge
+ * may as well stay warm. No-op when Forge isn't running; otherwise kills it and
+ * waits briefly for the OS to reclaim the pages.
  */
 async function freeRamForOllama() {
   if (!(await forgeReady())) return;
@@ -471,8 +475,8 @@ const server = http.createServer(async (req, res) => {
         res.write(JSON.stringify({ category, events }) + '\n');
       };
       await handlePhenology(sanitizeKey(key), facts, {
-        force: !!force, cacheDir: CACHE_DIR, ollamaUrl: OLLAMA_URL, model: OLLAMA_MODEL,
-        freeRam: freeRamForOllama, // evict a warm Forge before phenology's LLM calls
+        force: !!force, cacheDir: CACHE_DIR, ollamaUrl: OLLAMA_URL, ollamaModel: OLLAMA_MODEL,
+        freeRam: freeRamForOllama, // evict a warm Forge before a local LLM call
       }, emit);
       res.end();
     } catch (e) {
@@ -522,5 +526,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[image-server] listening on http://127.0.0.1:${PORT}  cache=${CACHE_DIR}`);
+  console.log(`[image-server] listening on http://127.0.0.1:${PORT}  cache=${CACHE_DIR}  llm=${llmProvider()}`);
 });

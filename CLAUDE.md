@@ -29,6 +29,7 @@ No backend, no database, no runtime dependencies.
 ├── server/
 │   ├── image-server.mjs          # Node service on :7871 — routes /generate, /phenology, /climate
 │   ├── phenology.mjs             # Seasonal wildlife/bloom events (LLM + iNat/GBIF)
+│   ├── llm.mjs                   # LLM provider switch: Anthropic (default) or Ollama
 │   └── climate-cache.mjs         # Per-location store: climate normals + daily actuals
 └── src/
     ├── main.js                   # App entry: drawing loop, fetch, export, events
@@ -289,8 +290,9 @@ summer (e.g. Oakland) renders that way.
    `{ key, facts, force }` to `/wheel-images/generate`.
 2. The **image service** (`server/image-server.mjs`, Node, zero deps) serves a
    disk-cached PNG for that key, or — on a miss / `force`:
-   - asks **Ollama** (`llama3.2:3b`) for a season-order-agnostic ecology prompt
-     (terrain/plants/wildlife only — it must **not** name or order seasons);
+   - asks the **LLM** (Claude by default — see "Which LLM" below) for a
+     season-order-agnostic ecology prompt (terrain/plants/wildlife only — it must
+     **not** name or order seasons);
    - synthesizes a **data-driven init** image with `buildSeasonalInitPNG()` (a
      pure-Node PNG encoder): a flat 1024×512 equirectangular strip whose width is
      the local year and whose colors come from the 12 bands (green where veg is
@@ -309,10 +311,38 @@ Caching is keyed by slugified location name, so each location generates once.
 The control panel has an **Ecology image** toggle and a **Generate new image**
 button (forces regeneration, bypassing the cache).
 
+### Which LLM — `server/llm.mjs`
+
+Every LLM call the service makes — the ecology image prompt and phenology's two
+proposal lanes — goes through `server/llm.mjs`, so one env var picks the engine:
+
+| `LLM_PROVIDER` | Engine | Notes |
+|---|---|---|
+| `anthropic` (**default**) | Claude via `api.anthropic.com` | Model `claude-opus-5` (`ANTHROPIC_MODEL`), effort `low` (`ANTHROPIC_EFFORT`), `max_tokens` 4000 (`ANTHROPIC_MAX_TOKENS`) — a small ask, so effort is kept low. Refusals (`stop_reason: "refusal"`) are treated as failures. |
+| `ollama` | local `llama3.2:3b` | The previous behavior, unchanged (`OLLAMA_URL`, `OLLAMA_MODEL`, JSON mode, `keep_alive: 0`). |
+
+**The key is the astrology site's key, read from where nginx already keeps it** —
+the chmod-600 `/opt/homebrew/etc/nginx/anthropic-key.conf`, parsed out of its
+`proxy_set_header x-api-key "…"` line (override the path with
+`ANTHROPIC_KEY_FILE`, or the value itself with `ANTHROPIC_API_KEY`). It is
+deliberately **not** copied into the launchd plist or a second file, so rotating
+stays a one-file edit; the file is re-read per call, so a rotation takes effect
+without restarting the service. The service calls Anthropic **directly** — it
+does not go through the public `/api/anthropic/` nginx proxy, which would add a
+hop and share the browser-facing `ai` rate-limit bucket.
+
+Anthropic is a **soft** default: with no key, or on any API failure (revoked key,
+rate limit, outage), the call falls through to the local llama with a warning
+rather than returning nothing — that is what keeps a dead key from emptying the
+phenology band. Watch for `[llm] Anthropic call failed` in
+`~/Library/Logs/wheel-image-server.log`; it means the intended engine is not
+answering and the weaker local model is doing the work.
+
 ### Image service — deployment
 - **Location on server:** `~/Sites/wheel-of-the-year/server/image-server.mjs`
 - **Port:** `127.0.0.1:7871` (env `PORT`); cache dir `image-cache/` (env `IMAGE_CACHE_DIR`)
-- **Upstreams:** Ollama `127.0.0.1:11434`, Forge `127.0.0.1:7860` (both local);
+- **Upstreams:** `api.anthropic.com` (or local Ollama `127.0.0.1:11434` — see
+  "Which LLM" above) and Forge `127.0.0.1:7860`;
   the phenology service also calls out to iNaturalist, GBIF, and Wikipedia (public
   APIs, no key) and — if `EBIRD_API_KEY` is set — eBird.
 - **Optional env `EBIRD_API_KEY`:** read by `server/phenology.mjs`. When set, an
@@ -336,6 +366,12 @@ The first new-city request after idle therefore waits ~1–3 min for Forge to bo
 + load the model; cache hits and subsequent generations are fast.
 
 ### Memory: Forge and Ollama take turns (8 GB Mac mini)
+
+> Since the LLM moved to Claude by default, this whole dance only matters on the
+> `LLM_PROVIDER=ollama` path (and on the Anthropic path's local fallback). When
+> Claude answers, nothing loads locally and Forge is left warm — `freeRam` is
+> passed *into* `llm.mjs` and fires only when a call actually reaches Ollama.
+
 The Mac mini has only **8 GB RAM**, so Forge (~4–6 GB with `--no-half`) and Ollama
 (`llama3.2:3b`, ~2.5–3 GB) must not co-reside. Ollama runs as an always-on daemon
 (`brew services start ollama` → LaunchAgent `homebrew.mxcl.ollama`, RunAtLoad +
@@ -344,10 +380,12 @@ inference. The image service arbitrates the RAM around that:
 - **LLM unloaded immediately after prompting** — every Ollama call passes
   `keep_alive: 0`, so llama frees its model RAM before Forge loads its larger one.
 - **Forge evicted before any Ollama inference** — `freeRamForOllama()` kills a warm
-  Forge right before the LLM is used (image-prompt composition *and*, via the
-  `freeRam` opt, phenology's proposal calls), so the model always has room. It's a
-  no-op when Forge is down, and phenology only invokes it on a real generation, not
-  a cache replay. Forge reboots on demand for the next image.
+  Forge right before the local model is used. It is handed to `llm.mjs` as the
+  `freeRam` opt (by image-prompt composition *and* phenology's proposal calls) and
+  fired there, immediately before an Ollama request — including the fallback after
+  an Anthropic failure, where Forge may still be warm. It's a no-op when Forge is
+  down, and phenology only reaches it on a real generation, not a cache replay.
+  Forge reboots on demand for the next image.
 - **Forge shut down when idle** — after `FORGE_IDLE_TIMEOUT` (default 600s / 10 min)
   with no generations, `shutdownForge()` kills the process on the Forge port
   (`lsof -ti :PORT | xargs kill -9`), returning RAM to Ollama / the astrology site.
@@ -490,6 +528,7 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Add a new preset city | `src/data/presets.js` and preset button in `index.html` or `main.js` |
 | Change tooltip content | `ui/tooltip.js` |
 | Change image generation prompts / biome logic | `server/image-server.mjs` (`composePrompt`, `PANORAMA_PREFIX`); biome in `fetch/image.js` |
+| Switch the LLM, its model, or where the key comes from | `server/llm.mjs` (env `LLM_PROVIDER`, `ANTHROPIC_*`, `OLLAMA_*`) |
 | Change the data→color seasonal mapping | `fetch/image.js` (`monthlyConditions`) and `server/image-server.mjs` (`groundColor`, `buildSeasonalInitPNG`) |
 | Change image size / sampler / denoise | `server/image-server.mjs` (`forgeImg2img`, `IMG2IMG_DENOISE`) |
 | Change the little-planet warp | `src/draw/centerImage.js` (`buildLittlePlanet`) |
