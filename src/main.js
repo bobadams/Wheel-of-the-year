@@ -35,7 +35,7 @@ import { showRingChart } from './ui/ringChart.js';
 import {
   locationKey, loadLocationCache, saveLocationCache,
   hasSeries, newestDate, daysSince, actualsForDisplay, mergeActuals,
-  entriesToDates, normalsFromData,
+  entriesToDates, normalsFromData, isSamePlace, coordSuffix,
 } from './data/locationCache.js';
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
@@ -121,7 +121,15 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
   // Anything that lands after the user has moved on belongs to a stale load.
   const stale = () => currentData.name !== name;
 
-  const cached = await loadLocationCache(key);
+  let cached = await loadLocationCache(key);
+  // If the key already belongs to a different place, hand this one its own key
+  // rather than let the two overwrite each other on every visit.
+  if (cached && !isSamePlace(cached, lat, lon)) {
+    console.warn(`Location cache: "${key}" holds ${cached.name} (${cached.lat}, ${cached.lon}) — filing ${name} separately`);
+    key = `${key}-${coordSuffix(lat, lon)}`;
+    cached = await loadLocationCache(key);
+    if (cached && !isSamePlace(cached, lat, lon)) cached = null;
+  }
   if (stale()) return;
 
   // ── Paint what is already recorded ────────────────────────────────────────

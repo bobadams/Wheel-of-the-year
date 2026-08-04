@@ -425,6 +425,34 @@ request, MODIS drops from ~22 subset calls to at most one (composites publish
 every 16 days, so it is skipped entirely until the stored one is that old), and
 the ERA5 / CAMS / visibility normals calls disappear altogether.
 
+### Keying — one record per geocoded label
+
+The key is the slugified **geocoder label**, not the user's query, so different
+spellings that resolve to the same place share a record (`Boulder` and
+`Boulder, CO` both → `boulder-boulder-county`). But a **zip code and its town do
+not**, because Nominatim labels them differently:
+
+| query | label | key | coords |
+|---|---|---|---|
+| `80301` | 80301, Boulder County | `80301-boulder-county` | 40.0476, −105.2174 |
+| `Boulder` | Boulder, Boulder County | `boulder-boulder-county` | 40.0150, −105.2705 |
+
+This is deliberate. Those two points are ~5.8 km apart: the ERA5-derived rings
+are identical (both snap to grid cell `40.03515, −105.23076`, so that part *is* a
+redundant download), but **MODIS EVI genuinely differs** — 250 m pixels, and the
+app picks a best-contrast pixel per location. EVI is also nearly all of the cold-
+load time, so merging them would save bandwidth but little else. Aliases each
+keep their own record.
+
+**Collision guard.** Because the key is only the first two comma-components of
+the label, two genuinely different places can produce the same one
+(`Main Street, Springfield` exists in more than one state). `loadLocation()`
+therefore checks the record's stored coordinates against the point just geocoded
+(`isSamePlace`, 25 km tolerance). On a mismatch it does **not** reuse or
+overwrite — it re-reads under a coordinate-suffixed key
+(`…-4001_-10527`, via `coordSuffix`) so both places keep working. A record with
+no stored coordinates predates the check and is trusted.
+
 Presets are the one exception: `loadLocation(..., { skipNormals: true })`, since
 their normals ship in the bundle. Only their actuals come from and go to the
 cache — bundled normals are never uploaded, which keeps an incomplete preset

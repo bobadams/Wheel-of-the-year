@@ -46,6 +46,40 @@ export function locationKey(data) {
     || 'location';
 }
 
+// How far a cached record's coordinates may sit from the point we just geocoded
+// before it is treated as a different place. Generous, because a legitimate match
+// re-geocodes to essentially the same point and OSM centroids drift a little;
+// tight enough that two same-named places in different states never match.
+const MAX_DRIFT_KM = 25;
+
+function haversineKm(aLat, aLon, bLat, bLon) {
+  const R = 6371, rad = d => d * Math.PI / 180;
+  const dLat = rad(bLat - aLat), dLon = rad(bLon - aLon);
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Is this record actually for the place we geocoded?
+ *
+ * Keys come from the geocoder's label, and two genuinely different places can
+ * slugify to the same one — "Main Street, Springfield" exists in more than one
+ * state. Without this check the second one would silently be served the first
+ * one's climate. A record with no stored coordinates predates the check and is
+ * given the benefit of the doubt.
+ */
+export function isSamePlace(rec, lat, lon) {
+  if (!Number.isFinite(rec?.lat) || !Number.isFinite(rec?.lon)) return true;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return true;
+  return haversineKm(lat, lon, rec.lat, rec.lon) <= MAX_DRIFT_KM;
+}
+
+/** Suffix that gives a colliding location its own key, stable across visits. */
+export function coordSuffix(lat, lon) {
+  return `${Math.round((lat ?? 0) * 100)}_${Math.round((lon ?? 0) * 100)}`;
+}
+
 /** A usable normals series: 365 points with at least one real value. */
 export function hasSeries(arr) {
   return Array.isArray(arr) && arr.length === 365 && arr.some(v => Number.isFinite(v));
