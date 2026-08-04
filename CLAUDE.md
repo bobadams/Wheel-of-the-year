@@ -26,13 +26,18 @@ No backend, no database, no runtime dependencies.
 ├── package.json                  # Scripts and devDependencies (vite only)
 ├── scripts/
 │   └── generate-preset-oakland.js  # Regenerates Oakland preset from live APIs
+├── server/
+│   ├── image-server.mjs          # Node service on :7871 — routes /generate, /phenology, /climate
+│   ├── phenology.mjs             # Seasonal wildlife/bloom events (LLM + iNat/GBIF)
+│   └── climate-cache.mjs         # Per-location store: climate normals + daily actuals
 └── src/
     ├── main.js                   # App entry: drawing loop, fetch, export, events
     ├── state.js                  # Centralized mutable state
     ├── styles.css                # All styling (CSS custom properties, responsive)
     ├── data/
     │   ├── ringDefs.js           # 5 ring definitions (type, color, range, labels)
-    │   └── presets.js            # Built-in Oakland, CA preset (365-point arrays)
+    │   ├── presets.js            # Built-in Oakland, CA preset (365-point arrays)
+    │   └── locationCache.js      # Client half of the server-side location cache
     ├── draw/
     │   ├── canvas.js             # Math helpers: doy2angle, polar, norm
     │   ├── ring.js               # Draw concentric ring arcs (one arc per day)
@@ -43,7 +48,7 @@ No backend, no database, no runtime dependencies.
     ├── fetch/
     │   ├── climate.js            # Geocode city → fetch ERA5 30-yr normals → 365-day arrays
     │   ├── ndvi.js               # Fetch MODIS 16-day NDVI composites → smooth → 365-day array
-    │   ├── actuals.js            # Fetch past ~185 days of real observations
+    │   ├── actuals.js            # Fetch recent real observations (trailing ~350 days, or just the days past what the cache holds)
     │   └── image.js              # Generate AI landscape image via Forge API
     └── ui/
         ├── controls.js           # Ring control panel: toggle, color, thickness, opacity, drag-reorder
@@ -358,13 +363,75 @@ the service directly (it sends permissive CORS headers); otherwise the
 
 ### nginx location block (for reference)
 ```nginx
+# Location cache — matched ahead of /wheel-images/ so it avoids the expensive-AI
+# rate limit (it is a plain disk read/write, and a page load sends several).
+location /wheel-images/climate {
+    proxy_pass http://127.0.0.1:7871/climate;
+    proxy_http_version 1.1;
+    proxy_read_timeout 60s;
+    client_max_body_size 8m;
+    limit_req zone=wheelcache burst=20 nodelay;
+}
+
 location /wheel-images/ {
     proxy_pass http://127.0.0.1:7871/;
     proxy_http_version 1.1;
     proxy_read_timeout 300s;
     proxy_buffering off;
+    limit_req zone=ai burst=5 nodelay;
 }
 ```
+The `wheelcache` zone is declared alongside `ai` in `nginx.conf`:
+`limit_req_zone $binary_remote_addr zone=wheelcache:10m rate=600r/m;`
+
+## Location Cache — downloaded data is kept on the Mac mini
+
+Every location the app downloads is recorded server-side, so a city is fetched
+from the upstream APIs **once** rather than once per visit. Revisiting a place
+paints the stored data immediately and then tops up only what is genuinely
+missing.
+
+- **Client:** `src/data/locationCache.js` (transport + merge helpers) driven by
+  `loadLocation()` in `src/main.js`.
+- **Server:** `server/climate-cache.mjs`, mounted on the image service at
+  `GET /climate?key=…` and `POST /climate`. Records live beside the image and
+  phenology caches in `image-cache/` as `<key>.climate.json` (~35 KB each), and
+  are keyed by the same slugified location name all three caches use
+  (`locationKey`, exported from `locationCache.js`).
+
+The server is a **dumb store** — the browser owns all fetching. A record has two
+halves, and the difference between them is the whole design:
+
+| | stored as | refresh rule |
+|---|---|---|
+| `normals` | 365-point arrays, one per ring | Each comes from a **fixed historical window** (ERA5 1991–2020, MODIS EVI 2013–2022, CAMS PM2.5 2014–2023, ERA5 visibility 2010–2020), so a stored one is **never** refetched. |
+| `actuals` | **date-keyed** maps, `{ '2026-08-04': 72.1 }` | Topped up incrementally: the client reads the newest stored date and asks upstream only for the days after it (less a 3-day overlap, since the tail of a reanalysis archive is provisional). |
+
+Storing actuals by calendar date rather than day-of-year is what makes the
+top-up possible — DOY collapses years together and can't tell you where you left
+off. `actualsForDisplay()` converts back to the `{ doy, value }` arrays the
+drawing code wants, keeping the trailing 365 days with the newest observation
+winning each DOY slot.
+
+**Repairing interrupted visits.** Presence is tested field by field against
+`currentData`, and each stage POSTs its own patch the moment it lands, rather
+than one write at the end. So a visit abandoned mid-EVI still leaves its normals
+and weather actuals on the server, and the next visit fetches only the gap. This
+is also why a failed EVI fetch's **proxy fallback is deliberately not recorded** —
+leaving the slot empty is what makes the next visit retry MODIS.
+
+Typical effect on a revisit: the 350-day weather window becomes a ~4-day
+request, MODIS drops from ~22 subset calls to at most one (composites publish
+every 16 days, so it is skipped entirely until the stored one is that old), and
+the ERA5 / CAMS / visibility normals calls disappear altogether.
+
+Presets are the one exception: `loadLocation(..., { skipNormals: true })`, since
+their normals ship in the bundle. Only their actuals come from and go to the
+cache — bundled normals are never uploaded, which keeps an incomplete preset
+(Oakland has no `snow`/`cloud`) from masking what a live fetch would supply.
+
+Local dev: without `VITE_IMAGE_URL` set, every cache call fails softly and the
+app refetches everything exactly as it did before the cache existed.
 
 ## No Tests
 
@@ -378,7 +445,8 @@ There is no test suite. The project has no test runner, no test files, and no CI
 
 - **DOY vs month index**: DOY is 0-indexed and 0 = winter solstice day; don't confuse with calendar month arrays
 - **Feb 29**: All code skips leap-day; ensure any new date-math is consistent
-- **MODIS latency**: Fetching NDVI for a new city takes 30–60 seconds due to 16-day batch requests; do not assume it's fast
+- **MODIS latency**: Fetching NDVI for a *new* city takes 30–60 seconds due to 16-day batch requests; do not assume it's fast. A city already in the location cache skips it.
+- **Actuals are date-keyed, not DOY-keyed**: the cache stores `'YYYY-MM-DD' → value`. Collapsing to DOY before storage destroys the information the incremental top-up needs. Convert to DOY only at draw time (`actualsForDisplay`).
 - **Canvas size**: The canvas is resized on window resize; always re-draw after resize events
 - **`ctx.save/restore`**: Forgetting these causes accumulated transform/style state bugs across draws
 
@@ -397,3 +465,6 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Change the data→color seasonal mapping | `fetch/image.js` (`monthlyConditions`) and `server/image-server.mjs` (`groundColor`, `buildSeasonalInitPNG`) |
 | Change image size / sampler / denoise | `server/image-server.mjs` (`forgeImg2img`, `IMG2IMG_DENOISE`) |
 | Change the little-planet warp | `src/draw/centerImage.js` (`buildLittlePlanet`) |
+| Change what gets cached per location | `src/data/locationCache.js` (`NORMAL_SERIES`, `ACTUAL_SERIES`) **and** `server/climate-cache.mjs` (the same two lists) |
+| Change the cache top-up / retention windows | `src/fetch/actuals.js` (`WINDOW_DAYS`, `OVERLAP_DAYS`), `server/climate-cache.mjs` (`RETAIN_DAYS`), `locationCache.js` (`DISPLAY_DAYS`) |
+| Add a stage to the location load | `loadLocation()` in `src/main.js` — paint it, then `record()` its own patch |

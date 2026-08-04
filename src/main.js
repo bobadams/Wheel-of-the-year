@@ -22,14 +22,21 @@ import { geocode, fetchClimateAPI, aggregateClimate } from './fetch/climate.js';
 import { fetchModisEVI, eviProxyFallback } from './fetch/evi.js';
 import { fetchPm25 } from './fetch/pm25.js';
 import { fetchVisibility } from './fetch/visibility.js';
-import { fetchActuals, fetchRecentEVI, fetchActualsPm25, fetchActualsVisibility } from './fetch/actuals.js';
+import {
+  fetchActuals, fetchRecentEVI, fetchActualsPm25, fetchActualsVisibility,
+  calendarDOY, todayDate,
+} from './fetch/actuals.js';
 import { fetchPhenology } from './fetch/phenology.js';
 import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
 import { setupTooltip } from './ui/tooltip.js';
 import { showRingChart } from './ui/ringChart.js';
-import { saveActualsCache, loadActualsCache } from './data/actualsCache.js';
+import {
+  locationKey, loadLocationCache, saveLocationCache,
+  hasSeries, newestDate, daysSince, actualsForDisplay, mergeActuals,
+  entriesToDates, normalsFromData,
+} from './data/locationCache.js';
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
 function draw() {
@@ -75,6 +82,226 @@ function draw() {
   drawCenter();
 }
 
+// ─── Location loading ────────────────────────────────────────────────────────
+// Everything the app downloads is recorded on the Mac mini (see
+// src/data/locationCache.js). Loading a location therefore means: paint what has
+// already been recorded, fetch only what is genuinely missing, and record each
+// piece the moment it lands — so a visit abandoned partway through leaves the
+// next one less to do rather than nothing.
+
+// The 365-point normals a single ERA5 call yields. `windDir` rides along but is
+// not part of the presence test (it is null wherever the wind was calm).
+const CLIMATE_NORMALS = ['temp', 'rain', 'daylight', 'wind', 'snow', 'cloud'];
+// The daily observation series its recent-observations sibling yields.
+const WEATHER_ACTUALS = ['temp', 'rain', 'wind', 'snow', 'cloud'];
+
+// MODIS publishes a composite every 16 days, so there is nothing new to ask for
+// until the stored one is that old.
+const EVI_COMPOSITE_DAYS = 16;
+
+/** Oldest of the newest stored dates across a group of series; null if any is absent. */
+function actualsSince(store, ids) {
+  let oldest = null;
+  for (const id of ids) {
+    const d = newestDate(store[id]);
+    if (!d) return null;
+    if (!oldest || d < oldest) oldest = d;
+  }
+  return oldest;
+}
+
+/**
+ * Load `name` into the wheel, using the server's record for whatever it already
+ * holds. Resolves once every stage has settled.
+ *
+ * @param {boolean} opts.skipNormals preset locations ship their normals in the
+ *   bundle, so only their actuals come from (and go to) the cache.
+ */
+async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
+  // Anything that lands after the user has moved on belongs to a stale load.
+  const stale = () => currentData.name !== name;
+
+  const cached = await loadLocationCache(key);
+  if (stale()) return;
+
+  // ── Paint what is already recorded ────────────────────────────────────────
+  if (!skipNormals && cached?.normals && Object.keys(cached.normals).length) {
+    mergeCurrentData(cached.normals);
+    refreshSourceBadges();
+  }
+
+  // Actuals are held date-keyed so repeat visits accumulate instead of
+  // overwriting; the wheel draws the trailing year of whatever the store holds.
+  const store = { ...(cached?.actuals ?? {}) };
+  setTodayDOY(calendarDOY(todayDate()));
+  const paintActuals = () => { setActuals(actualsForDisplay(store)); draw(); };
+  paintActuals();
+
+  const record = patch => saveLocationCache(key, { name, lat, lon, ...patch });
+
+  const needClimate    = !skipNormals && !CLIMATE_NORMALS.every(k => hasSeries(currentData[k]));
+  const needEvi        = !skipNormals && !hasSeries(currentData.evi);
+  const needPm25       = !skipNormals && !hasSeries(currentData.pm25);
+  const needVisibility = !skipNormals && !hasSeries(currentData.visibility);
+
+  if (needEvi || needPm25 || needVisibility) {
+    mergeCurrentData({
+      meta: {
+        ...currentData.meta,
+        ...(needEvi        ? { evi:        { sourceInterval: 'pending', source: 'fetching…' } } : {}),
+        ...(needPm25       ? { pm25:       { sourceInterval: 'hourly',  source: 'fetching…' } } : {}),
+        ...(needVisibility ? { visibility: { sourceInterval: 'hourly',  source: 'fetching…' } } : {}),
+      },
+    });
+    refreshSourceBadges();
+    draw();
+  }
+
+  // ── Climate normals (ERA5 1991–2020) — a fixed window, so fetched at most once
+  if (needClimate) {
+    setStatus('loading', `${name} — fetching climate normals…`);
+    const climate = aggregateClimate(await fetchClimateAPI(lat, lon), lat);
+    if (stale()) return;
+    mergeCurrentData({
+      temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
+      wind: climate.windMph, windDir: climate.windDir,
+      snow: climate.snowIn, cloud: climate.cloudMean,
+      resolution: climate.resolution,
+      meta: {
+        ...currentData.meta,
+        temp:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+        rain:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+        daylight: { sourceInterval: 'calculated', source: `astronomical (lat ${lat.toFixed(1)}°)` },
+        wind:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+        snow:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+        cloud:    { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
+      },
+    });
+    refreshSourceBadges();
+    draw();
+    record({ normals: normalsFromData(currentData, [...CLIMATE_NORMALS, 'windDir', 'resolution']) });
+  }
+
+  // ── Recent weather actuals — only the days past what is already stored ────
+  setStatus('loading', `${name} — fetching recent observations…`);
+  const weatherActuals = fetchActuals(lat, lon, actualsSince(store, WEATHER_ACTUALS))
+    .then(w => {
+      if (stale()) return;
+      const patch = {};
+      WEATHER_ACTUALS.forEach(id => {
+        if (mergeActuals(store, id, w[id])) patch[id] = entriesToDates(w[id]);
+      });
+      paintActuals();
+      if (Object.keys(patch).length) record({ actuals: patch });
+    })
+    .catch(() => {});
+
+  // ── EVI normals (MODIS 2013–2022) — the slow one; draw as soon as it lands ─
+  if (needEvi) {
+    setStatus('loading', `${name} — fetching MODIS vegetation history (slowest step)…`);
+    setEviProgress(true, 0, 'Fetching MODIS satellite data…');
+    let evi = null, sampLat = lat, sampLon = lon, sampMapUrl = null, peakKey = null, troughKey = null;
+    try {
+      ({ evi, sampLat, sampLon, sampMapUrl, peakKey, troughKey } =
+        await fetchModisEVI(lat, lon, pct => setEviProgress(true, pct, `MODIS EVI: ${pct}%…`)));
+    } catch {
+      evi = eviProxyFallback(currentData.temp, currentData.rain);
+    }
+    setEviProgress(false);
+    if (stale()) return;
+    const real = !!sampMapUrl; // only a genuine MODIS result carries a sample point
+    mergeCurrentData({
+      evi,
+      eviSampLat: sampLat, eviSampLon: sampLon, eviSampMapUrl: sampMapUrl,
+      eviPeakKey: peakKey, eviTroughKey: troughKey,
+      eviSource: real ? 'MODIS EVI 2013–2022' : 'proxy',
+      meta: {
+        ...currentData.meta,
+        evi: real
+          ? { sourceInterval: '16-day', source: 'MODIS MOD13Q1 EVI 2013–2022' }
+          : { sourceInterval: 'proxy',  source: 'ERA5-derived proxy' },
+      },
+    });
+    refreshSourceBadges();
+    draw();
+    // The proxy is a stand-in for a failed fetch, not data — leaving it unrecorded
+    // is what lets the next visit try MODIS again.
+    if (real) {
+      record({ normals: normalsFromData(currentData, ['evi', 'eviSampLat', 'eviSampLon', 'eviSampMapUrl', 'eviPeakKey', 'eviTroughKey', 'eviSource']) });
+    }
+  }
+
+  // ── PM2.5 normals (CAMS 2014–2023) ────────────────────────────────────────
+  if (needPm25) {
+    setStatus('loading', `${name} — fetching PM2.5 air quality normals…`);
+    let pm25 = null;
+    try { pm25 = await fetchPm25(lat, lon); } catch { /* optional */ }
+    // A location the upstream has no data for comes back as a series of nulls
+    // rather than an error; treat that as unavailable instead of an empty ring.
+    if (!hasSeries(pm25)) pm25 = null;
+    if (stale()) return;
+    mergeCurrentData({
+      pm25,
+      meta: { ...currentData.meta, pm25: { sourceInterval: 'hourly', source: pm25 ? 'CAMS 2014–2023' : 'unavailable' } },
+    });
+    refreshSourceBadges();
+    draw();
+    if (pm25) record({ normals: normalsFromData(currentData, ['pm25']) });
+  }
+
+  // Phenology band — non-blocking; biome is informed by EVI, so start it once
+  // that has landed. Has its own server-side cache. Fails silently.
+  loadPhenology(currentData);
+
+  // ── Visibility normals (ERA5 2010–2020) ───────────────────────────────────
+  if (needVisibility) {
+    setStatus('loading', `${name} — fetching visibility normals…`);
+    let visibility = null;
+    try { visibility = await fetchVisibility(lat, lon); } catch { /* optional */ }
+    if (!hasSeries(visibility)) visibility = null;
+    if (stale()) return;
+    mergeCurrentData({
+      visibility,
+      meta: { ...currentData.meta, visibility: { sourceInterval: 'hourly', source: visibility ? 'ERA5 2010–2020' : 'unavailable' } },
+    });
+    refreshSourceBadges();
+    draw();
+    if (visibility) record({ normals: normalsFromData(currentData, ['visibility']) });
+  }
+
+  await weatherActuals;
+  if (stale()) return;
+  setStatus('ok', `${name} — loaded.`);
+
+  // ── The remaining actuals series, each topped up from its own newest date ──
+  const eviSince = newestDate(store.evi);
+  if (daysSince(eviSince) >= EVI_COMPOSITE_DAYS) {
+    try {
+      const recent = await fetchRecentEVI(
+        currentData.eviSampLat ?? lat,
+        currentData.eviSampLon ?? lon,
+        eviSince,
+      );
+      if (!stale() && mergeActuals(store, 'evi', recent)) {
+        paintActuals();
+        record({ actuals: { evi: entriesToDates(recent) } });
+      }
+    } catch { /* EVI actuals optional */ }
+  }
+
+  for (const [id, fetchFn] of [['pm25', fetchActualsPm25], ['visibility', fetchActualsVisibility]]) {
+    try {
+      const recent = await fetchFn(lat, lon, newestDate(store[id]));
+      if (!stale() && mergeActuals(store, id, recent)) {
+        paintActuals();
+        record({ actuals: { [id]: entriesToDates(recent) } });
+      }
+    } catch { /* optional */ }
+  }
+
+  if (!stale()) setStatus('ok', `${name} — all data loaded.`);
+}
+
 // ─── Live fetch ──────────────────────────────────────────────────────────────
 async function fetchCity() {
   const q = document.getElementById('cityInput').value.trim();
@@ -96,125 +323,11 @@ async function fetchCity() {
     refreshSourceBadges();
     draw();
 
-    // Restore cached actuals immediately so the overlay shows while fresh data loads
-    const cached = loadActualsCache(shortName);
-    if (cached) {
-      setTodayDOY(cached.todayDOY);
-      setActuals(cached.data);
-      draw();
-    }
-
-    setStatus('loading', `Found ${shortName} — fetching climate normals…`);
-    const climate = aggregateClimate(await fetchClimateAPI(geo.lat, geo.lon), geo.lat);
-
-    // Draw climate rings as soon as normals arrive
-    mergeCurrentData({
-      temp: climate.tempF, rain: climate.rainIn, daylight: climate.daylight,
-      wind: climate.windMph, windDir: climate.windDir,
-      snow: climate.snowIn, cloud: climate.cloudMean,
-      resolution: climate.resolution,
-      meta: {
-        temp:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
-        rain:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
-        daylight: { sourceInterval: 'calculated', source: `astronomical (lat ${geo.lat.toFixed(1)}°)` },
-        evi:      { sourceInterval: 'pending',    source: 'fetching…' },
-        wind:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
-        pm25:       { sourceInterval: 'hourly',   source: 'fetching…' },
-        visibility: { sourceInterval: 'hourly',   source: 'fetching…' },
-        snow:       { sourceInterval: 'daily',    source: 'ERA5 1991–2020' },
-        cloud:      { sourceInterval: 'daily',    source: 'ERA5 1991–2020' },
-      },
+    setStatus('loading', `Found ${shortName} — checking saved data…`);
+    await loadLocation({
+      key: locationKey({ name: shortName, lat: geo.lat, lon: geo.lon }),
+      name: shortName, lat: geo.lat, lon: geo.lon,
     });
-    refreshSourceBadges();
-    draw();
-
-    // Actuals overlay — kick off in parallel with the slow fetches below
-    setStatus('loading', 'Normals loaded — fetching actuals + EVI…');
-    const actualsPromise = fetchActuals(geo.lat, geo.lon).then(w => {
-      setTodayDOY(w.todayDOY);
-      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null, visibility: null, snow: w.snow, cloud: w.cloud });
-      draw();
-    }).catch(() => {});
-
-    // EVI (slowest — draw as soon as it lands)
-    setEviProgress(true, 0, 'Fetching MODIS satellite data…');
-    let evi, eviSampLat = geo.lat, eviSampLon = geo.lon, eviSampMapUrl = null;
-    let eviPeakKey = null, eviTroughKey = null;
-    try {
-      ({ evi, sampLat: eviSampLat, sampLon: eviSampLon, sampMapUrl: eviSampMapUrl,
-         peakKey: eviPeakKey, troughKey: eviTroughKey,
-       } = await fetchModisEVI(geo.lat, geo.lon, pct => setEviProgress(true, pct, `MODIS EVI: ${pct}%…`)));
-    } catch {
-      evi = eviProxyFallback(climate.tempF, climate.rainIn);
-    }
-    setEviProgress(false);
-    mergeCurrentData({
-      evi, eviSampLat, eviSampLon, eviSampMapUrl, eviPeakKey, eviTroughKey,
-      eviSource: evi ? 'MODIS EVI 2013–2022' : 'proxy',
-      meta: {
-        ...currentData.meta,
-        evi: { sourceInterval: evi ? '16-day' : 'proxy', source: evi ? 'MODIS MOD13Q1 EVI 2013–2022' : 'ERA5-derived proxy' },
-      },
-    });
-    refreshSourceBadges();
-    draw();
-
-    // PM2.5
-    setStatus('loading', 'Fetching PM2.5 air quality normals…');
-    let pm25 = null;
-    try {
-      pm25 = await fetchPm25(geo.lat, geo.lon);
-    } catch { /* optional */ }
-    mergeCurrentData({
-      pm25,
-      meta: { ...currentData.meta, pm25: { sourceInterval: 'hourly', source: pm25 ? 'CAMS 2014–2023' : 'unavailable' } },
-    });
-    refreshSourceBadges();
-    draw();
-
-    // Phenology band — non-blocking; biome is now informed by EVI. Fails silently.
-    loadPhenology(currentData);
-
-    // Visibility
-    setStatus('loading', 'Fetching visibility normals…');
-    let visibility = null;
-    try {
-      visibility = await fetchVisibility(geo.lat, geo.lon);
-    } catch { /* optional */ }
-    mergeCurrentData({
-      visibility,
-      meta: { ...currentData.meta, visibility: { sourceInterval: 'hourly', source: visibility ? 'ERA5 2010–2020' : 'unavailable' } },
-    });
-    refreshSourceBadges();
-    draw();
-
-    // Wait for actuals to finish before declaring done
-    await actualsPromise;
-    setStatus('ok', `${shortName} — loaded.`);
-
-    // EVI / PM2.5 / visibility actuals (non-blocking)
-    try {
-      const recentEvi = await fetchRecentEVI(
-        currentData.eviSampLat ?? geo.lat,
-        currentData.eviSampLon ?? geo.lon,
-      );
-      if (recentEvi?.length) { actuals.evi = recentEvi; draw(); }
-    } catch { /* EVI actuals optional */ }
-
-    try {
-      const recentPm25 = await fetchActualsPm25(geo.lat, geo.lon);
-      if (recentPm25?.length) { actuals.pm25 = recentPm25; draw(); }
-    } catch { /* PM2.5 actuals optional */ }
-
-    try {
-      const recentVis = await fetchActualsVisibility(geo.lat, geo.lon);
-      if (recentVis?.length) { actuals.visibility = recentVis; draw(); }
-    } catch { /* visibility actuals optional */ }
-
-    // Persist actuals so the next page load can show them immediately
-    if (actuals) saveActualsCache(shortName, actuals, todayDOY);
-
-    setStatus('ok', `${shortName} — all data loaded.`);
   } catch (e) {
     setStatus('error', e.message);
     setEviProgress(false);
@@ -248,8 +361,11 @@ function loadPreset(p) {
   document.getElementById('cityInput').value = p.city;
   setActivePreset(p.label);
   refreshPresets(); refreshSourceBadges(); draw();
-  loadPhenology(p.data);
-  setStatus('ok', `Loaded built-in data for ${p.data.name} — click Load Live Data for actuals overlay`);
+  setStatus('ok', `Loaded built-in data for ${p.data.name} — fetching actuals overlay…`);
+  // Normals ship in the bundle; the actuals overlay and the phenology band come
+  // from the location cache, topped up from the upstream APIs.
+  loadLocation({ key: locationKey(p.data), name: p.data.name, lat: p.data.lat, lon: p.data.lon, skipNormals: true })
+    .catch(e => setStatus('error', `Preset loaded. Actuals failed: ${e.message}`));
 }
 
 function refreshPresets() {
@@ -628,36 +744,14 @@ function init() {
     presetsEl.appendChild(btn);
   });
 
-  // Restore from URL params if present; otherwise fetch actuals for the default preset
+  // Restore from URL params if present; otherwise load the default preset's
+  // actuals overlay and phenology band (its normals ship in the bundle).
   if (applyUrlParams()) return;
 
-  // Phenology band for the default preset — non-blocking, runs in parallel with
-  // the actuals fetch below. (loadPreset does this too; the startup path must as
-  // well or the band never loads on a plain page visit.)
-  loadPhenology(PRESETS[0].data);
-
-  (async () => {
-    const { lat, lon } = PRESETS[0].data;
-    setStatus('loading', 'Fetching actuals for past year…');
-    try {
-      const w = await fetchActuals(lat, lon);
-      setTodayDOY(w.todayDOY);
-      setActuals({ temp: w.temp, rain: w.rain, wind: w.wind, evi: null, pm25: null, visibility: null, snow: w.snow, cloud: w.cloud });
-      draw();
-      setStatus('ok', `${currentData.name} — preset + actuals loaded. Today = DOY ${w.todayDOY}.`);
-      try {
-        const { eviSampLat, eviSampLon } = PRESETS[0].data;
-        const recentEvi = await fetchRecentEVI(eviSampLat ?? lat, eviSampLon ?? lon);
-        if (recentEvi?.length) { actuals.evi = recentEvi; draw(); }
-      } catch { /* EVI actuals optional */ }
-      try {
-        const recentPm25 = await fetchActualsPm25(lat, lon);
-        if (recentPm25?.length) { actuals.pm25 = recentPm25; draw(); }
-      } catch { /* PM2.5 actuals optional */ }
-    } catch (e) {
-      setStatus('error', `Preset loaded. Actuals failed: ${e.message}`);
-    }
-  })();
+  const p0 = PRESETS[0].data;
+  setStatus('loading', 'Fetching actuals for past year…');
+  loadLocation({ key: locationKey(p0), name: p0.name, lat: p0.lat, lon: p0.lon, skipNormals: true })
+    .catch(e => setStatus('error', `Preset loaded. Actuals failed: ${e.message}`));
 }
 
 window.addEventListener('DOMContentLoaded', init);

@@ -10,6 +10,10 @@
 //     Diffusion prompt from `facts`, runs Forge txt2img, caches the PNG (and the
 //     prompt alongside it for debugging), and returns the PNG.
 //
+// It also hosts two sibling per-location caches keyed the same way:
+//   POST /phenology  → server/phenology.mjs   (seasonal wildlife/bloom events)
+//   GET/POST /climate → server/climate-cache.mjs (climate normals + daily actuals)
+//
 // Forge and Ollama are kept from co-residing in RAM (the Mac mini has 8 GB):
 // the LLM is unloaded right after composing the prompt (keep_alive: 0), and
 // Forge is launched on demand and shut down after an idle period.
@@ -27,6 +31,7 @@ import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { handlePhenology } from './phenology.mjs';
+import { readClimateRecord, writeClimateRecord } from './climate-cache.mjs';
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
 const HOME        = process.env.HOME ?? '/Users/bradfordadams';
@@ -417,11 +422,11 @@ async function generate(key, facts, force) {
   }
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = 1e6) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
-    req.on('data', c => { size += c.length; if (size > 1e6) { reject(new Error('body too large')); req.destroy(); } chunks.push(c); });
+    req.on('data', c => { size += c.length; if (size > maxBytes) { reject(new Error('body too large')); req.destroy(); } chunks.push(c); });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
@@ -431,7 +436,7 @@ const server = http.createServer(async (req, res) => {
   // Permissive CORS so local dev (VITE_IMAGE_URL) can hit this directly.
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -477,6 +482,35 @@ const server = http.createServer(async (req, res) => {
       res.end(res.headersSent ? '' : JSON.stringify({ error: e.message }));
     }
     return;
+  }
+
+  // Climate cache — a plain disk-backed JSON store. Unlike /generate and
+  // /phenology there is no LLM or Forge work behind it, so it stays cheap enough
+  // to hit several times per page load.
+  if (url.pathname === '/climate') {
+    try {
+      if (req.method === 'GET') {
+        const rec = await readClimateRecord(sanitizeKey(url.searchParams.get('key')), { cacheDir: CACHE_DIR });
+        if (!rec) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'not cached' })); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+        res.end(JSON.stringify(rec));
+        return;
+      }
+      if (req.method === 'POST') {
+        // Normals (10 × 365 points) plus a year of daily actuals runs to a few
+        // hundred KB, so this needs more headroom than the default body cap.
+        const patch = JSON.parse(await readBody(req, 8e6) || '{}');
+        const summary = await writeClimateRecord(sanitizeKey(patch.key), patch, { cacheDir: CACHE_DIR });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(summary));
+        return;
+      }
+    } catch (e) {
+      console.error('[image-server] /climate failed:', e.message);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+      return;
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/health') {

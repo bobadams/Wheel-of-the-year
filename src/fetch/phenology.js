@@ -10,6 +10,8 @@
 // In local dev, set VITE_IMAGE_URL=http://macmini.local:7871 in .env.local to hit
 // the service directly. Without it the path 404s and the band stays empty.
 
+import { locationKey } from '../data/locationCache.js';
+
 const IMAGE_BASE = import.meta.env.VITE_IMAGE_URL ?? '/wheel-images';
 
 /**
@@ -34,15 +36,6 @@ function classifyBiome(data) {
   if (meanRain < 0.06)                                   return 'temperate grassland prairie';
   if (meanTemp < 50)                                     return 'cool temperate mixed forest';
   return 'temperate deciduous forest';
-}
-
-/** Stable cache key for a location — slugified name, else rounded lat/lon. */
-function locationKey(data) {
-  const base = data.name
-    ? data.name
-    : `${(data.lat ?? 0).toFixed(2)}_${(data.lon ?? 0).toFixed(2)}`;
-  return base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
-    || 'location';
 }
 
 /** Compact facts the phenology service needs to propose + anchor events. */
