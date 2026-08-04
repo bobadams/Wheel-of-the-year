@@ -69,20 +69,20 @@ npm run generate-presets  # Regenerate Oakland preset from live APIs (Node.js)
 
 ### Infrastructure
 - **Server:** Mac mini, accessed via `ssh macmini`
-- **Domain:** `slamad.ong` (Cloudflare-managed)
+- **Domain:** `slamado.ng` (Cloudflare-managed)
 - **Web server:** nginx on port 8080 (`/opt/homebrew/etc/nginx/servers/daily-astrology.conf`)
 - **Tunnel:** Named Cloudflare Tunnel `macmini` (UUID `218c4c03-1ae4-44d9-80d1-3ac64888e7de`), managed by launchd, runs `cloudflared tunnel run macmini`
 - **Project location on server:** `~/Sites/wheel-of-the-year/`
 - **Git remote:** `git@github.com:bobadams/wheel-of-the-year.git`
 
 ### Live URLs
-- `https://slamad.ong/` — **landing page**: a static index of all the sites
+- `https://slamado.ng/` — **landing page**: a static index of all the sites
   below (`~/Sites/landing/index.html`). Previously redirected to `/astrology/`.
-- `https://slamad.ong/wheel/` — Wheel of the Year (this app)
-- `https://slamad.ong/astrology/` — Daily Astrology (sibling app)
-- `https://slamad.ong/planets.html` — Ephemeris / "The Wandering Stars" planetary
+- `https://slamado.ng/wheel/` — Wheel of the Year (this app)
+- `https://slamado.ng/astrology/` — Daily Astrology (sibling app)
+- `https://slamado.ng/planets.html` — Ephemeris / "The Wandering Stars" planetary
   ephemeris wheel (served from `~/Sites/wandering-stars/planets.html`)
-- `https://slamad.ong/synastry.html` — Synastry Reading (served from
+- `https://slamado.ng/synastry.html` — Synastry Reading (served from
   `~/Sites/wandering-stars/synastry.html`)
 
 ### Vite base path
@@ -123,7 +123,7 @@ location /wheel/ {
 location = /planets.html   { root /Users/bradfordadams/Sites/wandering-stars; }
 location = /synastry.html  { root /Users/bradfordadams/Sites/wandering-stars; }
 
-# slamad.ong root serves the static landing index (was: 302 → /astrology/).
+# slamado.ng root serves the static landing index (was: 302 → /astrology/).
 location = / {
     root /Users/bradfordadams/Sites/landing;
     try_files /index.html =404;
