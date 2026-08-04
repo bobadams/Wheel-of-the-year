@@ -94,6 +94,27 @@ npm run generate-presets  # Regenerate Oakland preset from live APIs (Node.js)
 ### Vite base path
 `vite.config.js` sets `base: '/wheel/'` so all assets are served from the correct subpath. Do not change this without updating the nginx config to match.
 
+### Never let `index.html` be cached
+
+Vite content-hashes the bundle, so **`index.html` is the only file that names the
+current build**. nginx originally sent no `Cache-Control` for it, only
+`Last-Modified` — which lets browsers cache it heuristically. A returning visitor
+then kept loading the *previous* bundle indefinitely, with no error to notice:
+that is how the location cache appeared "broken" after it shipped (an old bundle
+makes no `/wheel-images/climate` call at all, so it refetched MODIS EVI from
+scratch every single visit).
+
+The nginx block now sends `Cache-Control: no-cache` for everything under
+`/wheel/` and `immutable` for `/wheel/assets/` — the entry point revalidates each
+load, the hashed assets are still cached hard. Two things to remember:
+
+- **A browser already holding a stale copy needs one hard reload** (⇧⌘R). The
+  header only governs copies fetched after it was added.
+- **A stale reference does not 404.** `try_files` falls back to `/wheel/index.html`,
+  so a request for a deleted bundle returns HTML with a `200` under a `.js` URL.
+  When debugging "the site behaves like an old version", check which bundle the
+  page actually requested against `ls dist/assets/` — don't trust the status code.
+
 ### Deploying updates
 
 > **The Mac mini is the canonical source.** All edits are made directly in
@@ -119,9 +140,17 @@ nginx serves the built `dist/` directory directly — no process restart needed 
 
 ### nginx location block (for reference)
 ```nginx
+# Content-hashed bundles — safe to cache forever, the name changes when the
+# contents do. `^~` makes this win over the /wheel/ prefix below.
+location ^~ /wheel/assets/ {
+    alias /Users/bradfordadams/Sites/wheel-of-the-year/dist/assets/;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
+
 location /wheel/ {
     alias /Users/bradfordadams/Sites/wheel-of-the-year/dist/;
     try_files $uri $uri/ /wheel/index.html;
+    add_header Cache-Control "no-cache";   # see "Never let index.html be cached"
 }
 
 # Ephemeris ("The Wandering Stars") and Synastry are single static files
