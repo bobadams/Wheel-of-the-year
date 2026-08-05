@@ -243,6 +243,26 @@ The 5 rings: `temperature`, `rainfall`, `daylight`, `ndvi`, `wind`.
 
 MODIS requests are batched per 16-day interval; `setNdviProgress()` updates a progress bar during fetch.
 
+### A subset request may span at most 10 composites
+
+Ask for an 11th and the API returns `400 exceeds maximum subset tiles support
+of 10`. The cap counts **dates, not pixels** — a 25×25 grid over 10 composites
+is fine, a single pixel over 11 is not — so it applies to every multi-date
+request regardless of `kmAboveBelow`. `MAX_COMPOSITES` in `src/fetch/evi.js` is
+that limit, and both multi-date callers chunk by it.
+
+A full MOD13Q1 year is 23 composites, so `fetchAnnualSeries` needs three
+requests. It originally asked for the year in one and took the 400 every time;
+`fetchModisBatch` maps a failed request to `null`, which the caller read as "no
+series", so **every location on earth silently fell back to the northern-
+hemisphere peak/trough dates** (Jul 12 / Jan 1). Southern-hemisphere sites had
+their two seasons exactly backwards. Nothing surfaced this but one
+`MODIS batch failed 400` line on the console.
+
+Do not change `MAX_COMPOSITES` from 10 to tune the baseline fetch: batch ids in
+`eviDoneKeys` are derived from each batch's date range, so a different size
+orphans the resume state in every stored location record.
+
 ### A MODIS subset is not a lat/lon raster — never treat it as one
 
 `fetchPixelGrid` returns a window on the MODIS **sinusoidal** grid, and three

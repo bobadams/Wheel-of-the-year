@@ -11,15 +11,43 @@ function dateToModisKey(calendarDate) {
   return modisJulianKey(year, doy);
 }
 
+/** The 23 sixteen-day composite start days of a MOD13Q1 year: 1, 17, 33 … 353. */
+const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16);
+
+/**
+ * Hard API limit — a subset request spanning more than 10 composites is
+ * rejected outright with `exceeds maximum subset tiles support of 10`. It is a
+ * count of dates, not of pixels: a 25×25 grid over 10 dates is fine, a single
+ * pixel over 11 is not. Every multi-date request has to be chunked by this.
+ *
+ * Also the batch size of the 10-year baseline below. Keep it at 10: batch ids
+ * are derived from the date range, and stored `eviDoneKeys` in the location
+ * cache would stop matching if it changed.
+ */
+const MAX_COMPOSITES = 10;
+
 // Fetch all 23 sixteen-day composites for a full year, spatially averaged over
 // a km×km radius around the given point.  km=0 returns the single 250m pixel;
 // km>0 averages over a (2km)×(2km) area of 250m pixels, which dilutes urban
 // signal and exposes the underlying regional seasonal pattern.
+//
+// A whole year is 23 composites, so this MUST be split into chunks of
+// MAX_COMPOSITES. It used to ask for the year in one request and get a 400
+// every time, which silently emptied the series and sent findSeasonalPixel to
+// its northern-hemisphere fallback dates for every location on earth.
 export async function fetchAnnualSeries(lat, lon, year = 2022, km = 0) {
-  const start = modisJulianKey(year, 1);
-  const end   = modisJulianKey(year, 353);
+  const chunks = [];
+  for (let i = 0; i < MODIS_DOYS.length; i += MAX_COMPOSITES) {
+    chunks.push(MODIS_DOYS.slice(i, i + MAX_COMPOSITES));
+  }
   try {
-    return await fetchModisBatch(lat, lon, start, end, km) ?? [];
+    const parts = await Promise.all(chunks.map(c => fetchModisBatch(
+      lat, lon,
+      modisJulianKey(year, c[0]),
+      modisJulianKey(year, c[c.length - 1]),
+      km,
+    )));
+    return parts.filter(Boolean).flat().sort((a, b) => a.date < b.date ? -1 : 1);
   } catch {
     return [];
   }
@@ -247,14 +275,12 @@ export async function fetchModisEVI(lat, lon, onProgress, opts = {}) {
   // the pixel is known — a resumed visit opens its bar at the banked percentage
   // instead of flashing 0%.
   const years = [2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022];
-  const MODIS_DOYS = Array.from({ length: 23 }, (_, i) => 1 + i * 16); // 1,17,33…353
-  const BATCH = 10;
   const CONCURRENCY = 5;
 
   const allTasks = [];
   for (const y of years) {
-    for (let i = 0; i < MODIS_DOYS.length; i += BATCH) {
-      const batch = MODIS_DOYS.slice(i, i + BATCH);
+    for (let i = 0; i < MODIS_DOYS.length; i += MAX_COMPOSITES) {
+      const batch = MODIS_DOYS.slice(i, i + MAX_COMPOSITES);
       const startKey = modisJulianKey(y, batch[0]);
       const endKey   = modisJulianKey(y, batch[batch.length - 1]);
       allTasks.push({ startKey, endKey, id: batchId(startKey, endKey) });
