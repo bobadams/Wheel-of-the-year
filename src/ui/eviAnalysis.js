@@ -1,14 +1,12 @@
-import { fetchPixelGrid, fetchAnnualSeries } from '../fetch/evi.js';
+import { fetchPixelGrid, fetchAnnualSeries, cellLatLon } from '../fetch/evi.js';
 import { currentData } from '../state.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const SCREEN_KM    = 10;
-const PIXEL_KM     = 0.25;
-const KM_PER_DEG   = 111.0;
 const MIN_MEAN_EVI = 0.10;
 const TILE_SIZE    = 256;
-const ZOOM         = 13;
-const PANEL_PX     = 280;   // display canvas size (square)
+const ZOOM         = 12;
+const PANEL_PX     = 420;   // backing resolution of each square panel
 const TS_W         = 700;
 const TS_H         = 200;
 
@@ -46,35 +44,61 @@ function fetchTileImage(z, ty, tx) {
   });
 }
 
-async function drawSatelliteBg(ctx, canvasPx, lat, lon, nrows, ncols) {
+/**
+ * Project the MODIS grid onto a north-up Web-Mercator canvas.
+ *
+ * The grid is a sheared parallelogram in geographic space, not a rectangle (see
+ * fetchPixelGrid), so it cannot be blitted as an axis-aligned raster — every
+ * cell has to be placed individually. This walks the (nrows+1)×(ncols+1)
+ * lattice of cell CORNERS once; each cell is then the quad between four
+ * neighbouring lattice points, and the same lattice serves all three panels.
+ */
+function buildProjection(grid, canvasPx) {
+  const { nrows, ncols } = grid;
+  const stride = (ncols + 1) * 2;
+  const pts = new Float64Array((nrows + 1) * stride);
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i <= nrows; i++) {
+    for (let j = 0; j <= ncols; j++) {
+      const [lat, lon] = cellLatLon(grid, i - 0.5, j - 0.5);
+      const { x, y } = latLonToWorldPx(lat, lon, ZOOM);
+      const o = i * stride + j * 2;
+      pts[o] = x; pts[o + 1] = y;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  // Fit the whole footprint, preserving aspect. The shear makes the bounding
+  // box markedly wider than tall, so the parallelogram sits letterboxed inside
+  // the square panel rather than being stretched to fill it.
+  const scale = Math.min(canvasPx / (maxX - minX), canvasPx / (maxY - minY));
+  const offX  = (canvasPx - (maxX - minX) * scale) / 2;
+  const offY  = (canvasPx - (maxY - minY) * scale) / 2;
+  for (let o = 0; o < pts.length; o += 2) {
+    pts[o]     = (pts[o]     - minX) * scale + offX;
+    pts[o + 1] = (pts[o + 1] - minY) * scale + offY;
+  }
+  return { pts, stride, nrows, ncols, minX, minY, scale, offX, offY };
+}
+
+async function drawSatelliteBg(ctx, canvasPx, proj) {
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(0, 0, canvasPx, canvasPx);
 
-  const latSpan = nrows * PIXEL_KM / KM_PER_DEG;
-  const lonSpan = ncols * PIXEL_KM / (KM_PER_DEG * Math.cos(lat * Math.PI / 180));
+  const { minX, minY, scale, offX, offY } = proj;
+  const toCanvas = (wx, wy) => [(wx - minX) * scale + offX, (wy - minY) * scale + offY];
 
-  // The MODIS grid rows increase going North; row 0 = southernmost
-  // so bbox: maxLat = lat + latSpan/2, minLat = lat - latSpan/2
-  const maxLat  = lat + latSpan / 2;
-  const minLat  = lat - latSpan / 2;
-  const minLon  = lon - lonSpan / 2;
-  const maxLon  = lon + lonSpan / 2;
-
-  const tl = latLonToWorldPx(maxLat, minLon, ZOOM);  // top-left  = northWest
-  const br = latLonToWorldPx(minLat, maxLon, ZOOM);  // bot-right = southEast
-
-  const pxW  = br.x - tl.x;
-  const pxH  = br.y - tl.y;
-  const scale = canvasPx / Math.max(pxW, pxH);
-
-  const txMin = Math.floor(tl.x / TILE_SIZE);
-  const txMax = Math.floor(br.x / TILE_SIZE);
-  const tyMin = Math.floor(tl.y / TILE_SIZE);
-  const tyMax = Math.floor(br.y / TILE_SIZE);
+  // Tiles covering the visible canvas, in world-pixel space.
+  const wx0 = minX - offX / scale,  wx1 = wx0 + canvasPx / scale;
+  const wy0 = minY - offY / scale,  wy1 = wy0 + canvasPx / scale;
 
   const fetches = [];
-  for (let ty = tyMin; ty <= tyMax; ty++) {
-    for (let tx = txMin; tx <= txMax; tx++) {
+  for (let ty = Math.floor(wy0 / TILE_SIZE); ty <= Math.floor(wy1 / TILE_SIZE); ty++) {
+    for (let tx = Math.floor(wx0 / TILE_SIZE); tx <= Math.floor(wx1 / TILE_SIZE); tx++) {
       fetches.push(fetchTileImage(ZOOM, ty, tx).then(img => ({ img, tx, ty })));
     }
   }
@@ -82,8 +106,7 @@ async function drawSatelliteBg(ctx, canvasPx, lat, lon, nrows, ncols) {
 
   tiles.forEach(({ img, tx, ty }) => {
     if (!img) return;
-    const ox = (tx * TILE_SIZE - tl.x) * scale;
-    const oy = (ty * TILE_SIZE - tl.y) * scale;
+    const [ox, oy] = toCanvas(tx * TILE_SIZE, ty * TILE_SIZE);
     ctx.drawImage(img, ox, oy, TILE_SIZE * scale, TILE_SIZE * scale);
   });
 }
@@ -108,35 +131,52 @@ function diffRgb(v, maxAbs) {
 }
 
 // ── EVI overlay ────────────────────────────────────────────────────────────────
-// MODIS row 0 = south; for map display (north up) we flip vertically
-function drawEviOverlay(ctx, canvasPx, pixels, nrows, ncols, colorFn, opacity, bestIdx) {
-  const cellW = canvasPx / ncols;
-  const cellH = canvasPx / nrows;
+// Row 0 is the NORTHERNMOST row (see fetchPixelGrid) — no vertical flip — and
+// each cell is drawn as a quad at its true position, which is what carries the
+// grid's shear onto the north-up satellite background.
+function cellPath(ctx, proj, row, col) {
+  const { pts, stride } = proj;
+  const a = row * stride + col * 2;      // NW corner
+  const b = a + 2;                       // NE
+  const d = a + stride;                  // SW
+  const e = d + 2;                       // SE
+  ctx.beginPath();
+  ctx.moveTo(pts[a], pts[a + 1]);
+  ctx.lineTo(pts[b], pts[b + 1]);
+  ctx.lineTo(pts[e], pts[e + 1]);
+  ctx.lineTo(pts[d], pts[d + 1]);
+  ctx.closePath();
+}
+
+function drawEviOverlay(ctx, proj, pixels, colorFn, opacity, bestIdx) {
+  const { ncols } = proj;
 
   ctx.save();
   ctx.globalAlpha = opacity;
   for (let i = 0; i < pixels.length; i++) {
     const c = colorFn(pixels[i]);
     if (!c) continue;
-    const dataRow = Math.floor(i / ncols);
-    const dataCol = i % ncols;
-    const dispRow = nrows - 1 - dataRow;  // flip: row 0 → bottom, row nrows-1 → top
-    ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-    ctx.fillRect(dataCol * cellW, dispRow * cellH, cellW, cellH);
+    const style = `rgb(${c[0]},${c[1]},${c[2]})`;
+    cellPath(ctx, proj, (i / ncols) | 0, i % ncols);
+    ctx.fillStyle   = style;
+    ctx.fill();
+    // Stroke the same path: neighbouring quads share edges, and antialiasing
+    // would otherwise leave a hairline grid of background between them.
+    ctx.strokeStyle = style;
+    ctx.lineWidth   = 1;
+    ctx.stroke();
   }
   ctx.restore();
 
   // Highlight selected pixel
   if (bestIdx >= 0 && bestIdx < pixels.length) {
-    const dataRow = Math.floor(bestIdx / ncols);
-    const dataCol = bestIdx % ncols;
-    const dispRow = nrows - 1 - dataRow;
     ctx.save();
+    cellPath(ctx, proj, (bestIdx / ncols) | 0, bestIdx % ncols);
     ctx.strokeStyle = '#ffff00';
     ctx.lineWidth   = 2;
     ctx.shadowColor = '#000';
     ctx.shadowBlur  = 3;
-    ctx.strokeRect(dataCol * cellW + 1, dispRow * cellH + 1, cellW - 2, cellH - 2);
+    ctx.stroke();
     ctx.restore();
   }
 }
@@ -343,12 +383,12 @@ function injectStyles() {
 // ── Render a single panel ──────────────────────────────────────────────────────
 // bgCanvas is a pre-rendered offscreen canvas containing the satellite tiles.
 // Calling this is synchronous after the bg is ready.
-function renderPanel(canvasEl, bgCanvas, pixels, nrows, ncols, colorFn, bestIdx, overlayOpacity) {
+function renderPanel(canvasEl, bgCanvas, proj, pixels, colorFn, bestIdx, overlayOpacity) {
   const ctx = canvasEl.getContext('2d');
   const px  = canvasEl.width;
   ctx.clearRect(0, 0, px, px);
   ctx.drawImage(bgCanvas, 0, 0, px, px);
-  drawEviOverlay(ctx, px, pixels, nrows, ncols, colorFn, overlayOpacity, bestIdx);
+  drawEviOverlay(ctx, proj, pixels, colorFn, overlayOpacity, bestIdx);
 }
 
 // ── Public entry point ─────────────────────────────────────────────────────────
@@ -471,8 +511,8 @@ export async function showEviAnalysis() {
     return;
   }
 
-  const { nrows, ncols, pixels: pxPeak }  = gridA;  // gridA = peak date
-  const { pixels: pxTrough }              = gridB;  // gridB = trough date
+  const { nrows, ncols, pixels: pxPeak } = gridA;  // gridA = peak date
+  const { pixels: pxTrough }             = gridB;  // gridB = trough date
 
   // Diff = peak − trough (always positive for vegetated pixels)
   const diffPixels = pxPeak.map((a, i) => {
@@ -484,14 +524,6 @@ export async function showEviAnalysis() {
 
   // Find best pixel (max amplitude × mean, same algorithm as evi.js)
   const bestIdx = findBestIdx(pxPeak, pxTrough, nrows, ncols);
-  const bestRow = Math.floor(bestIdx / ncols);
-  const bestCol = bestIdx % ncols;
-
-  // Compute best-pixel lat/lon for time series
-  const centerRow = Math.floor(nrows / 2);
-  const centerCol = Math.floor(ncols / 2);
-  const pixLat = lat + (bestRow - centerRow) * PIXEL_KM / KM_PER_DEG;
-  const pixLon = lon + (bestCol - centerCol) * PIXEL_KM / (KM_PER_DEG * Math.cos(lat * Math.PI / 180));
 
   statusEl.textContent = 'Rendering satellite tiles…';
 
@@ -499,18 +531,21 @@ export async function showEviAnalysis() {
   const julCanvas  = overlay.querySelector('#evi-panel-jul');
   const diffCanvas = overlay.querySelector('#evi-panel-diff');
 
+  // Corner lattice for the sheared grid — computed once, shared by all panels
+  const proj = buildProjection(gridA, PANEL_PX);
+
   // Fetch satellite tiles once into an offscreen canvas, reuse for all panels
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = PANEL_PX; bgCanvas.height = PANEL_PX;
-  await drawSatelliteBg(bgCanvas.getContext('2d'), PANEL_PX, lat, lon, nrows, ncols);
+  await drawSatelliteBg(bgCanvas.getContext('2d'), PANEL_PX, proj);
 
   let currentOpacity = parseFloat(opacityInput.value);
 
   // ── Redraw all three panels (synchronous after bg is ready) ──
   function renderAllPanels(opacity) {
-    renderPanel(janCanvas,  bgCanvas, pxPeak,     nrows, ncols, eviRgb,                   bestIdx, opacity);
-    renderPanel(julCanvas,  bgCanvas, pxTrough,   nrows, ncols, eviRgb,                   bestIdx, opacity);
-    renderPanel(diffCanvas, bgCanvas, diffPixels, nrows, ncols, v => diffRgb(v, maxAbs),  bestIdx, opacity);
+    renderPanel(janCanvas,  bgCanvas, proj, pxPeak,     eviRgb,                  bestIdx, opacity);
+    renderPanel(julCanvas,  bgCanvas, proj, pxTrough,   eviRgb,                  bestIdx, opacity);
+    renderPanel(diffCanvas, bgCanvas, proj, diffPixels, v => diffRgb(v, maxAbs), bestIdx, opacity);
   }
 
   renderAllPanels(currentOpacity);

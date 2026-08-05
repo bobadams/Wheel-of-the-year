@@ -76,18 +76,14 @@ npm run generate-presets  # Regenerate Oakland preset from live APIs (Node.js)
 ### Infrastructure
 - **Server:** Mac mini, accessed via `ssh macmini`
 - **Domain:** `slamado.ng` (Cloudflare-managed)
-- **Web server:** nginx on port 8080. Config lives in the shared infra repo
-  `~/Sites/infra/` — this app's routing is `nginx/sites/wheel.conf` there.
-  (It used to be `/opt/homebrew/etc/nginx/servers/daily-astrology.conf`, a
-  single file that routed every site on the machine.)
+- **Web server:** nginx on port 8080 (`/opt/homebrew/etc/nginx/servers/daily-astrology.conf`)
 - **Tunnel:** Named Cloudflare Tunnel `macmini` (UUID `218c4c03-1ae4-44d9-80d1-3ac64888e7de`), managed by launchd, runs `cloudflared tunnel run macmini`
 - **Project location on server:** `~/Sites/wheel-of-the-year/`
 - **Git remote:** `git@github.com:bobadams/wheel-of-the-year.git`
 
 ### Live URLs
 - `https://slamado.ng/` — **landing page**: a static index of all the sites
-  below (`~/Sites/infra/landing/index.html`; `~/Sites/landing` is now a symlink
-  to it). Previously redirected to `/astrology/`.
+  below (`~/Sites/landing/index.html`). Previously redirected to `/astrology/`.
 - `https://slamado.ng/wheel/` — Wheel of the Year (this app)
 - `https://slamado.ng/astrology/` — Daily Astrology (sibling app)
 - `https://slamado.ng/planets.html` — Ephemeris / "The Wandering Stars" planetary
@@ -144,28 +140,38 @@ nginx serves the built `dist/` directory directly — no process restart needed 
 > reconcile by hand — the server never pulls from you. Prefer editing on the
 > Mac mini directly to avoid divergence.
 
-### nginx config — see the infra repo
+### nginx location block (for reference)
+```nginx
+# Content-hashed bundles — safe to cache forever, the name changes when the
+# contents do. `^~` makes this win over the /wheel/ prefix below.
+location ^~ /wheel/assets/ {
+    alias /Users/bradfordadams/Sites/wheel-of-the-year/dist/assets/;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
 
-This app's routing is **`~/Sites/infra/nginx/sites/wheel.conf`** (the
-`/wheel/` and `/wheel-images/` blocks) and
-`~/Sites/infra/nginx/sites/wandering-stars.conf` (`/planets.html`,
-`/synastry.html`). The landing page at `/` is
-`~/Sites/infra/nginx/sites/landing.conf`.
+location /wheel/ {
+    alias /Users/bradfordadams/Sites/wheel-of-the-year/dist/;
+    try_files $uri $uri/ /wheel/index.html;
+    add_header Cache-Control "no-cache";   # see "Never let index.html be cached"
+}
 
-That directory is symlinked live into `/opt/homebrew/etc/nginx/sites/`, so
-editing a file there *is* editing production — then run
-`~/Sites/infra/bin/reload.sh` (which runs `nginx -t` first; a bad config
-takes down all seven sites, not just this one).
+# Ephemeris ("The Wandering Stars") and Synastry are single static files
+# served from ~/Sites/wandering-stars/.
+location = /planets.html   { root /Users/bradfordadams/Sites/wandering-stars; }
+location = /synastry.html  { root /Users/bradfordadams/Sites/wandering-stars; }
 
-> This section used to inline a copy of the location blocks. It has been
-> removed rather than updated: a second copy of config in prose is the
-> thing that goes stale. Read the real file.
+# slamado.ng root serves the static landing index (was: 302 → /astrology/).
+location = / {
+    root /Users/bradfordadams/Sites/landing;
+    try_files /index.html =404;
+}
+```
 
-> **Anthropic API key:** the `/api/anthropic/` proxy's `x-api-key` is not
-> inlined in any config file. It lives in a single `chmod 600` file at
-> `/opt/homebrew/etc/nginx/anthropic-key.conf`, kept **outside** the infra
-> repo and outside the `servers/*` and `sites/*` globs, pulled in with
-> `include`. To rotate: edit that one file and run `~/Sites/infra/bin/reload.sh`.
+> **Anthropic API key:** the `/api/anthropic/` proxy's `x-api-key` is NOT inlined
+> in `daily-astrology.conf`. It lives in a single `chmod 600` file at
+> `/opt/homebrew/etc/nginx/anthropic-key.conf` (kept **outside** the `servers/*`
+> glob so nginx doesn't load it as a standalone server), pulled in with
+> `include`. To rotate: edit that one file and `nginx -s reload`.
 
 ### Restarting the tunnel
 If the tunnel goes down:
@@ -236,6 +242,37 @@ The 5 rings: `temperature`, `rainfall`, `daylight`, `ndvi`, `wind`.
 | MODIS ORNL DAAC | MOD13Q1 NDVI 16-day composites | 2019–2022 baseline, 4km × 4km sample |
 
 MODIS requests are batched per 16-day interval; `setNdviProgress()` updates a progress bar during fetch.
+
+### A MODIS subset is not a lat/lon raster — never treat it as one
+
+`fetchPixelGrid` returns a window on the MODIS **sinusoidal** grid, and three
+properties of it are counter-intuitive enough that all three were once wrong at
+the same time. Place cells with `cellLatLon()` (in `src/fetch/evi.js`) and never
+by scaling a row/column offset into degrees.
+
+- **Row 0 is the NORTHERNMOST row**, column 0 the westernmost — ordinary raster
+  order, even though the response names its origin `xllcorner`/`yllcorner`
+  (lower-*left*). Verified with a subset centred on the north shore of Lake
+  Okeechobee, where open water is unambiguously south: the water pixels come
+  back in the last rows.
+- **The grid is sheared.** Rows are true parallels, but a column holds
+  sinusoidal *x* constant, and x = R·λ·cos φ — so as latitude falls, cos φ rises
+  and the column drifts east. The tilt is λ·tan φ, growing with distance from
+  the central meridian (λ₀ = 0): ~33° east of north over Florida, ~42° over the
+  Adirondacks, ~53° over California. A subset is a parallelogram, not a
+  rectangle, which is why `eviAnalysis.js` draws one quad per cell over the
+  north-up satellite tiles instead of blitting an axis-aligned raster.
+- **"250 m" pixels step 231.656358264 m** (`cellsize` on the response), and
+  `xllcorner`/`yllcorner` are the OUTER corner of the corner pixel — hence the
+  half-cell term in `cellLatLon`. Without it every computed point sits on a cell
+  boundary and snaps into the neighbouring row.
+
+`nrows`, `ncols`, `cellsize`, `xllcorner` and `yllcorner` are **top-level** on
+the response, not per-band; reading them off a `subset[]` entry silently yields
+`undefined`.
+
+To check a change here, probe it: request a 1-pixel subset (`kmAboveBelow=0`) at
+the lat/lon you computed and confirm the value equals the parent grid's cell.
 
 ## AI Image Generation
 
@@ -424,14 +461,28 @@ Local dev: set `VITE_IMAGE_URL=http://macmini.local:7871` in `.env.local` to hit
 the service directly (it sends permissive CORS headers); otherwise the
 `/wheel-images` path 404s in `npm run dev` and the image simply fails gracefully.
 
-### nginx routing for the image service
+### nginx location block (for reference)
+```nginx
+# Location cache — matched ahead of /wheel-images/ so it avoids the expensive-AI
+# rate limit (it is a plain disk read/write, and a page load sends several).
+location /wheel-images/climate {
+    proxy_pass http://127.0.0.1:7871/climate;
+    proxy_http_version 1.1;
+    proxy_read_timeout 60s;
+    client_max_body_size 8m;
+    limit_req zone=wheelcache burst=20 nodelay;
+}
 
-`/wheel-images/` proxies to `127.0.0.1:7871` and `/wheel-images/climate`
-is matched ahead of it so the cheap disk-backed cache avoids the
-expensive-AI rate limit. Both blocks are in
-**`~/Sites/infra/nginx/sites/wheel.conf`**; the `ai` and `wheelcache`
-`limit_req_zone`s they use are declared in `~/Sites/infra/nginx/nginx.conf`
-(zones are http-level and cannot be declared in a site fragment).
+location /wheel-images/ {
+    proxy_pass http://127.0.0.1:7871/;
+    proxy_http_version 1.1;
+    proxy_read_timeout 300s;
+    proxy_buffering off;
+    limit_req zone=ai burst=5 nodelay;
+}
+```
+The `wheelcache` zone is declared alongside `ai` in `nginx.conf`:
+`limit_req_zone $binary_remote_addr zone=wheelcache:10m rate=600r/m;`
 
 ## Location Cache — downloaded data is kept on the Mac mini
 

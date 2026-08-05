@@ -56,6 +56,57 @@ export async function fetchModisBatch(lat, lon, startKey, endKey, km = 0) {
   }
 }
 
+/**
+ * A MOD13Q1 subset is a window on the MODIS **sinusoidal** grid, and it is not
+ * a north-up lat/lon raster. Two consequences, both of which used to be ignored:
+ *
+ * 1. "250 m" pixels step 231.656358264 m, reported as `cellsize`. Assuming
+ *    250 m stretches an 81-pixel subset from its true 18.76 km to 20.25 km.
+ *
+ * 2. Far more importantly, the grid is SHEARED. Rows are true parallels, but a
+ *    column holds x constant, and in sinusoidal x = R·λ·cos φ — so as latitude
+ *    falls, cos φ rises and a constant-x column drifts east. The tilt is
+ *    -λ·sin φ, which grows with distance from the central meridian (λ₀ = 0):
+ *    ~33° east of north over Florida, ~42° over the Adirondacks, ~53° over
+ *    California. Treating the grid as axis-aligned smears every feature along
+ *    that diagonal.
+ *
+ * Row 0 is the NORTHERNMOST row and column 0 the westernmost — standard raster
+ * order, despite the response naming its origin `xllcorner`/`yllcorner`
+ * (lower-left). Verified against a subset centred on the north shore of Lake
+ * Okeechobee, where open water is unambiguously south: the water pixels come
+ * back in the LAST rows.
+ *
+ * `sinuToLatLon` is the only correct way to place a cell. It was checked by
+ * mapping every low-EVI cell around Raquette Lake, NY through it and asking for
+ * the terrain elevation there: mean 537.0 m, sd 3.6 m — the lake's surface,
+ * flat to within the noise.
+ */
+const R_SINU = 6371007.181;   // sphere radius of the MODIS sinusoidal grid
+
+/** Inverse MODIS sinusoidal (central meridian 0) → [lat, lon] in degrees. */
+export function sinuToLatLon(x, y) {
+  const phi = y / R_SINU;
+  return [phi * 180 / Math.PI, (x / (R_SINU * Math.cos(phi))) * 180 / Math.PI];
+}
+
+/**
+ * True geographic position of a grid cell centre. `row`/`col` may be
+ * fractional — pass ±0.5 offsets to get cell corners.
+ *
+ * The half-cell term is not cosmetic: `xllcorner`/`yllcorner` are the OUTER
+ * corner of the lower-left pixel, not its centre. Omitting it puts every point
+ * on a cell boundary, and probing the API with such a point snaps it into the
+ * neighbouring row — verified by requesting a 1-pixel subset at each computed
+ * position and reading back which cell of the parent grid it landed in.
+ */
+export function cellLatLon(grid, row, col) {
+  return sinuToLatLon(
+    grid.xll + (col + 0.5) * grid.cellM,
+    grid.yll + (grid.nrows - row - 0.5) * grid.cellM,
+  );
+}
+
 export async function fetchPixelGrid(lat, lon, dateKey, km) {
   const url = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?`
     + `latitude=${lat}&longitude=${lon}`
@@ -68,10 +119,18 @@ export async function fetchPixelGrid(lat, lon, dateKey, km) {
     const row = (d.subset || []).find(s => s.band === '250m_16_days_EVI');
     if (!row?.data?.length) return null;
     const scale = row.scale ?? 0.0001;
+    // nrows/ncols/cellsize/xllcorner/yllcorner are top-level on the response,
+    // not per-band; reading them off `row` always yielded undefined and fell
+    // back to a square guess. The corner origin is what makes exact
+    // georeferencing possible, so a grid without it is unusable.
     const side = Math.round(Math.sqrt(row.data.length));
+    if (d.xllcorner == null || d.yllcorner == null) return null;
     return {
-      nrows: row.nrows ?? side,
-      ncols: row.ncols ?? side,
+      nrows: d.nrows ?? side,
+      ncols: d.ncols ?? side,
+      cellM: d.cellsize ?? 231.656358264,
+      xll:   parseFloat(d.xllcorner),
+      yll:   parseFloat(d.yllcorner),
       pixels: row.data.map(v => { const s = v * scale; return s > -0.2 && s <= 1.0 ? s : null; }),
     };
   } catch {
@@ -96,8 +155,6 @@ export async function fetchPixelGrid(lat, lon, dateKey, km) {
 // fails.
 async function findSeasonalPixel(lat, lon) {
   const SCREEN_KM  = 10;
-  const PIXEL_KM   = 0.25;
-  const KM_PER_DEG = 111.0;
 
   // ── 1. Determine data-driven peak / trough dates ──────────────────────────
   // Fallback: NH summer peak vs. NH winter trough (previous behaviour)
@@ -125,8 +182,8 @@ async function findSeasonalPixel(lat, lon) {
   ]);
   if (!gridPeak || !gridTrough) return { lat, lon, peakKey, troughKey };
 
-  const { nrows, ncols, pixels: pxPeak }  = gridPeak;
-  const { pixels: pxTrough }              = gridTrough;
+  const { nrows, ncols, pixels: pxPeak } = gridPeak;
+  const { pixels: pxTrough }             = gridTrough;
   const centerRow = Math.floor(nrows / 2), centerCol = Math.floor(ncols / 2);
 
   // Score = amplitude × mean EVI
@@ -145,8 +202,12 @@ async function findSeasonalPixel(lat, lon) {
     }
   }
 
-  const latAdj = lat + (bestRow - centerRow) * PIXEL_KM / KM_PER_DEG;
-  const lonAdj = lon + (bestCol - centerCol) * PIXEL_KM / (KM_PER_DEG * Math.cos(lat * Math.PI / 180));
+  // Place the winning cell by inverting the sinusoidal projection. A row/column
+  // offset scaled into degrees cannot work here: the grid is sheared (see
+  // fetchPixelGrid), so the offset that lands on a cell depends on where in the
+  // grid it sits. The old formula sampled a point up to ~10 km from the pixel
+  // it had just scored, and the wheel's EVI ring was built from there.
+  const [latAdj, lonAdj] = cellLatLon(gridPeak, bestRow, bestCol);
   return { lat: latAdj, lon: lonAdj, peakKey, troughKey };
 }
 
