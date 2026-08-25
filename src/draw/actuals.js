@@ -1,5 +1,6 @@
-import { canvas, ringState, displayState, actuals, todayDOY } from '../state.js';
+import { canvas, ringState, displayState, todayDOY } from '../state.js';
 import { doy2angle, polar, norm, catmullRomPath } from './canvas.js';
+import { INK, R, hairline } from './theme.js';
 
 export function smoothEntries(entries, winDays = 7) {
   return entries.map(e => {
@@ -43,9 +44,9 @@ export function drawActualsLine(ringDef, entries, layout, normBounds) {
   });
 
   ctx.save();
-  ctx.strokeStyle = s.color; ctx.lineWidth = W * 0.001; ctx.globalAlpha = 1.0;
+  ctx.strokeStyle = s.color; ctx.lineWidth = hairline(W, 0.0014, 0.9); ctx.globalAlpha = 0.95;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.setLineDash([W * 0.008, W * 0.008]);
+  ctx.setLineDash([W * 0.009, W * 0.007]);
   ctx.beginPath();
   if (pts.length < 50) {
     catmullRomPath(ctx, pts);
@@ -61,34 +62,29 @@ export function drawTodayDot(layouts, normBounds) {
   const { ctx, W, CX, CY } = canvas;
   const angle = doy2angle(todayDOY + 0.5);
 
-  // Hairline red line from center to just past the moon ring (W * 0.430)
-  const lineEnd = W * 0.448;
-  const [x2, y2] = polar(CX, CY, angle, lineEnd);
+  // A single radial line across the data and the calendar, ending in a filled
+  // wedge on the moon lane. The date itself is set in the centre cartouche
+  // rather than out here, where it used to sit in the holiday register and
+  // collide with whatever feast happened to fall near today.
+  const rIn  = W * R.holeOuter;
+  const rOut = W * R.todayOuter;
+  const [x1, y1] = polar(CX, CY, angle, rIn);
+  const [x2, y2] = polar(CX, CY, angle, rOut);
+
   ctx.save();
-  ctx.strokeStyle = '#cc2200';
-  ctx.lineWidth = 0.8;
-  ctx.globalAlpha = 0.82;
+  ctx.strokeStyle = INK.today;
+  ctx.lineWidth = hairline(W, 0.0013, 0.7);
+  ctx.globalAlpha = 0.75;
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.moveTo(CX, CY);
+  ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
 
-  // "today" label just past the line tip
-  const labelR = lineEnd + W * 0.020;
-  const [lx, ly] = polar(CX, CY, angle, labelR);
-  ctx.save();
-  ctx.translate(lx, ly);
-  let rot = angle + Math.PI / 2;
-  const nr = ((rot % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-  if (nr > Math.PI / 2 && nr < Math.PI * 3 / 2) rot += Math.PI;
-  ctx.rotate(rot);
-  ctx.font = `italic ${W * 0.016}px 'Crimson Pro',serif`;
-  ctx.fillStyle = '#cc2200';
-  ctx.globalAlpha = 0.85;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('today', 0, 0);
-  ctx.restore();
+  // A filled terminus on the calendar band, so the line reads as pointing at a
+  // date rather than simply running out.
+  ctx.beginPath();
+  ctx.arc(x2, y2, W * 0.0048, 0, Math.PI * 2);
+  ctx.fillStyle = INK.today; ctx.globalAlpha = 0.9; ctx.fill();
   ctx.restore();
 }
