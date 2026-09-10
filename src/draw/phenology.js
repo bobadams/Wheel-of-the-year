@@ -14,7 +14,8 @@
  */
 
 import { canvas, phenologyEvents, displayState } from '../state.js';
-import { doy2angle, polar } from './canvas.js';
+import { doy2angle, drawArcText } from './canvas.js';
+import { R, haloText } from './theme.js';
 
 // Per-category visibility toggles (set from the control panel).
 const CATEGORY_STATE_KEY = {
@@ -27,12 +28,16 @@ const CATEGORY_STATE_KEY = {
 
 // Arcs are colored by animal/plant category (the axis the events are organized
 // along), falling back to a per-type color, then olive.
-const CATEGORY_COLORS = {
-  mammals: '#cf6a3a', // amber — mammals
-  fish:    '#1f9e89', // teal — fish
-  birds:   '#2f7fb0', // blue — birds
-  insects: '#8e6fb0', // violet — insects
-  plants:  '#5a9e3a', // green — plants
+export const CATEGORY_COLORS = {
+  mammals: '#b8602f', // amber — mammals
+  fish:    '#1f8a7a', // teal — fish
+  birds:   '#2b6f96', // blue — birds
+  insects: '#7a5f9c', // violet — insects
+  plants:  '#57893a', // green — plants
+};
+
+export const CATEGORY_LABELS = {
+  mammals: 'Mammals', fish: 'Fish', birds: 'Birds', insects: 'Insects', plants: 'Plants',
 };
 
 const TYPE_COLORS = {
@@ -73,11 +78,11 @@ export function drawPhenology() {
   // Band between the holidays labels and the axis (W·0.49). Four concentric
   // levels fit; events that can't claim a clash-free level are dropped rather
   // than stacked on top of another line.
-  const R_BASE    = W * 0.434; // innermost arc level
-  const STEP      = W * 0.0145; // radial gap between levels
-  const ARC_W     = W * 0.004;
-  const FONT_SIZE = W * 0.0112;
-  const MAX_LEVEL = 4;
+  const R_BASE    = W * R.phenoBase; // innermost arc level
+  const STEP      = W * R.phenoStep;  // radial gap between levels
+  const ARC_W     = W * R.phenoArc;
+  const FONT_SIZE = W * R.phenoFont;
+  const MAX_LEVEL = R.phenoLevels;
 
   ctx.save();
   ctx.font = `${FONT_SIZE}px 'Crimson Pro',serif`;
@@ -143,40 +148,10 @@ export function drawPhenology() {
     ctx.globalAlpha  = it.verified === false ? 0.6 : 0.82;
     ctx.fillStyle    = color;
     ctx.font         = `${FONT_SIZE}px 'Crimson Pro',serif`;
-    drawArcText(ctx, CX, CY, it.text, aCenter, rText);
+    drawArcText(ctx, CX, CY, it.text, aCenter, rText,
+      { paint: (c, ch, x, y) => haloText(c, ch, x, y, FONT_SIZE * 0.42) });
     ctx.restore();
   }
 
   ctx.restore();
-}
-
-/**
- * Render `text` along a circular arc of radius `r`, centered (tangentially) on
- * the angle `aCenter`. Each glyph is rotated to the local tangent so the whole
- * label bends with the arc. On the lower half of the wheel the text is flipped
- * so it stays upright (read left-to-right) rather than upside-down.
- */
-function drawArcText(ctx, cx, cy, text, aCenter, r) {
-  const chars  = [...text];
-  const widths = chars.map(c => ctx.measureText(c).width);
-  const total  = widths.reduce((s, w) => s + w, 0);
-  // Flip when the label sits on the bottom of the wheel (canvas y grows down).
-  const flip = Math.sin(aCenter) > 0;
-  const dir  = flip ? -1 : 1;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
-
-  // Walk from the leading edge of the label to its trailing edge.
-  let a = aCenter - dir * (total / r) / 2;
-  for (let i = 0; i < chars.length; i++) {
-    const charAngle = widths[i] / r;
-    const aMid = a + dir * charAngle / 2;
-    const [x, y] = polar(cx, cy, aMid, r);
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(aMid + (flip ? -Math.PI / 2 : Math.PI / 2));
-    ctx.fillText(chars[i], 0, 0);
-    ctx.restore();
-    a += dir * charAngle;
-  }
 }

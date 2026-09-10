@@ -60,5 +60,9 @@ export function setPhenologyCategory(category, events) {
 
 // Canvas dimensions (set during init, updated on resize)
 // svgExport: true while exportSVG() is running — draw code uses this to skip
-// Unicode-glyph paths and always emit drawn SVG paths instead.
-export const canvas = { el: null, ctx: null, W: 0, H: 0, CX: 0, CY: 0, svgExport: false };
+//   Unicode-glyph paths and always emit drawn SVG paths instead.
+// print:     true while the poster is being composed. Some annotation earns its
+//   space only at wall size — full month names, the whole set of centre figures
+//   — and this is what tells the draw code it is drawing for paper rather than
+//   for a 7-inch square on a screen.
+export const canvas = { el: null, ctx: null, W: 0, H: 0, CX: 0, CY: 0, svgExport: false, print: false };

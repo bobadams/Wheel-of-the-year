@@ -9,7 +9,8 @@
  */
 
 import { canvas, displayState } from '../state.js';
-import { doy2angle, polar } from './canvas.js';
+import { doy2angle, polar, uprightTangent } from './canvas.js';
+import { R, haloText } from './theme.js';
 
 const TRAD_STATE_KEY = {
   christian: 'holidayChristian',
@@ -306,20 +307,27 @@ function mogenDavidGlyphOk() {
 // ─── Rendering ────────────────────────────────────────────────────────────────
 
 export const TRAD_COLORS = {
-  christian: '#9b2335', // deep crimson
-  jewish:    '#1a4fa0', // cobalt blue
-  wicca:     '#2e7d32', // forest green
-  islamic:   '#c68400', // golden amber
+  christian: '#8c2a35', // deep crimson
+  jewish:    '#23508f', // cobalt blue
+  wicca:     '#3d6b33', // forest green
+  islamic:   '#a97a17', // golden amber
+};
+
+export const TRAD_LABELS = {
+  christian: 'Christian',
+  jewish:    'Jewish',
+  wicca:     'Wiccan / Pagan',
+  islamic:   'Islamic',
 };
 
 /**
  * Draw a tradition-specific symbol centred at (x, y) with bounding radius r.
  * ctx save/restore is handled internally.
  */
-function drawSymbol(ctx, trad, x, y, r) {
+export function drawSymbol(ctx, trad, x, y, r) {
   ctx.save();
   ctx.strokeStyle = TRAD_COLORS[trad];
-  ctx.lineWidth   = Math.max(0.8, r * 0.45);
+  ctx.lineWidth   = Math.max(0.6, r * 0.42);
   ctx.lineCap     = 'round';
   ctx.lineJoin    = 'round';
 
@@ -417,18 +425,17 @@ export function drawHolidays() {
   const { ctx, W, CX, CY } = canvas;
   const year = new Date().getFullYear();
 
-  const R_MARK    = W * 0.412; // centre of symbol
-  const R_LABEL   = W * 0.427; // default centre of rotated text
-  const SYM_R     = W * 0.0055;
-  const FONT_SIZE = W * 0.012;
-  // Step must exceed the radial-overlap threshold (FONT_SIZE + 2) so that
-  // labels placed one step apart are guaranteed to clear each other radially.
-  const STEP      = FONT_SIZE + 3;
+  const R_MARK    = W * R.holidayMark;  // centre of symbol
+  const R_LABEL   = W * R.holidayLabel; // innermost candidate label radius
+  const SYM_R     = W * R.holidaySym;
+  const FONT_SIZE = W * R.holidayFont;
+  const STEP      = W * R.holidayStep;
   // Floor: label centre must clear the outer edge of the symbol marker plus
   // half the label height and a small gap, so shifted labels never cover markers.
-  const MIN_R     = R_MARK + SYM_R + FONT_SIZE / 2 + 2;
+  const MIN_R     = R_MARK + SYM_R + FONT_SIZE / 2 + W * 0.002;
   // Prefer outward shifts; filter any candidate that would fall below the floor.
-  const CANDIDATES = [0, +1, +2].map(n => R_LABEL + n * STEP).filter(r => r >= MIN_R);
+  const CANDIDATES = Array.from({ length: R.holidayLevels }, (_, n) => R_LABEL + n * STEP)
+    .filter(r => r >= MIN_R);
 
   ctx.save();
 
@@ -448,13 +455,16 @@ export function drawHolidays() {
   function collides(a, b) {
     let dAngle = Math.abs(a.a - b.a);
     if (dAngle > Math.PI) dAngle = 2 * Math.PI - dAngle;
-    return dAngle * Math.min(a.labelR, b.labelR) < (a.textW + b.textW) / 2 + 2
-        && Math.abs(a.labelR - b.labelR) < FONT_SIZE + 2;
+    return dAngle * Math.min(a.labelR, b.labelR) < (a.textW + b.textW) / 2 + W * 0.003
+        && Math.abs(a.labelR - b.labelR) < STEP * 0.9;
   }
 
   // Greedy: for each label try each candidate radius until one is collision-free.
   const placed = [];
   for (const item of items) {
+    // Fall back to the outermost candidate: a label with nowhere clean to go is
+    // better one step out than left on top of the one already at R_LABEL.
+    item.labelR = CANDIDATES[CANDIDATES.length - 1];
     for (const r of CANDIDATES) {
       if (!placed.some(p => collides({ ...item, labelR: r }, p))) {
         item.labelR = r;
@@ -471,18 +481,18 @@ export function drawHolidays() {
     drawSymbol(ctx, h.trad, sx, sy, SYM_R);
   }
 
-  // Draw labels at their resolved radii.
+  // Draw labels at their resolved radii, upright everywhere on the wheel.
   for (const h of items) {
     const [lx, ly] = polar(CX, CY, h.a, h.labelR);
     ctx.save();
-    ctx.globalAlpha  = 0.72;
+    ctx.globalAlpha  = 0.82;
     ctx.fillStyle    = TRAD_COLORS[h.trad];
     ctx.font         = `${FONT_SIZE}px 'Crimson Pro',serif`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
     ctx.translate(lx, ly);
-    ctx.rotate(h.a + Math.PI / 2);
-    ctx.fillText(h.text, 0, 0);
+    ctx.rotate(uprightTangent(h.a));
+    haloText(ctx, h.text, 0, 0, FONT_SIZE * 0.45);
     ctx.restore();
   }
 

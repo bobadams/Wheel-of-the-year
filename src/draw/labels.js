@@ -1,9 +1,30 @@
 import { RING_DEFS, RING_LABELS } from '../data/ringDefs.js';
 import { canvas, ringState, currentData, smoothedData } from '../state.js';
-import { doy2angle, polar, norm } from './canvas.js';
+import { doy2angle, polar, norm, uprightTangent } from './canvas.js';
+import { INK, R, hairline, haloText } from './theme.js';
+import { doyLabel } from '../data/summary.js';
 
+/**
+ * The extremes of each ring: where in the year it peaks and bottoms out.
+ *
+ * These are the wheel's only quantitative annotations, so each carries both the
+ * value and the date it falls on — the date is what turns "hottest 79°F" from a
+ * legend entry into a fact about the place.
+ *
+ * Placement happens in two passes. The first works out where each label wants
+ * to sit; the second walks them out (or in) along their own radius until they
+ * stop overlapping each other, because two rings whose peaks fall in the same
+ * week would otherwise print one label on top of another.
+ */
 export function drawMinMaxMarkers(layouts, normBounds) {
   const { ctx, W, CX, CY } = canvas;
+  const size    = W * .0145;
+  const dotR    = W * .0042;
+  const half    = size * 1.15;                    // half-height of the two-line block
+  const ceiling = W * (R.seasonLabel - 0.010);    // the solstice labels own this lane
+
+  // ── Pass 1: what each label wants ──────────────────────────────────────────
+  const marks = [];
   RING_DEFS.forEach(r => {
     const s = ringState[r.id];
     if (!s.visible || !layouts[r.id]) return;
@@ -18,7 +39,7 @@ export function drawMinMaxMarkers(layouts, normBounds) {
 
     let maxD = 0, minD = 0;
     refData.forEach((v, i) => { if (v > refData[maxD]) maxD = i; if (v < refData[minD]) minD = i; });
-    // Snap to midpoint of any flat plateau so labels don't skew to the early edge
+    // Snap to the midpoint of any flat plateau so labels don't skew to its early edge.
     const plateauMid = (first) => {
       let end = first;
       while (end + 1 < refData.length && refData[end + 1] === refData[first]) end++;
@@ -28,43 +49,79 @@ export function drawMinMaxMarkers(layouts, normBounds) {
     minD = plateauMid(minD);
 
     [[maxD, 'max'], [minD, 'min']].forEach(([dayIdx, type]) => {
-      const val = dispData[dayIdx];
+      const val   = dispData[dayIdx];
       const peakR = innerR + norm(val, lo, hi) * maxThick;
       const angle = doy2angle(dayIdx + 0.5);
-      const dotR = W * .005;
-      const lineStart = peakR + dotR;
-      const lineEnd   = peakR + W * .019;
-      const textR     = lineEnd + W * .004;
+      const value = `${type === 'max' ? cfg.maxWord : cfg.minWord} ${cfg.fmt(val)}`;
+      const date  = doyLabel(dayIdx).toUpperCase();
 
-      const [dotX, dotY]   = polar(CX, CY, angle, peakR);
-      const [lx1, ly1]     = polar(CX, CY, angle, lineStart);
-      const [lx2, ly2]     = polar(CX, CY, angle, lineEnd);
-      const [tx, ty]       = polar(CX, CY, angle, textR);
+      ctx.font = `italic ${size}px 'Crimson Pro',serif`;
+      const w1 = ctx.measureText(value).width;
+      ctx.font = `${size * 0.76}px Cinzel,serif`;
+      const w2 = ctx.measureText(date).width;
 
-      ctx.save();
+      // Leaders normally point outward. A marker near the top of the outermost
+      // ring turns its leader inward instead, rather than pushing a label into
+      // the solstice/equinox lane; the halo keeps it readable over its own fill.
+      const out = peakR + W * .017 + W * .010 + half <= ceiling ? 1 : -1;
 
-      // Circle with white fill and colored stroke centered on the ring edge
-      ctx.beginPath(); ctx.arc(dotX, dotY, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff'; ctx.globalAlpha = 1.0; ctx.fill();
-      ctx.strokeStyle = s.color; ctx.lineWidth = 1.5; ctx.stroke();
-
-      // Line from circle edge outward
-      ctx.beginPath(); ctx.moveTo(lx1, ly1); ctx.lineTo(lx2, ly2);
-      ctx.strokeStyle = s.color; ctx.lineWidth = 1; ctx.globalAlpha = 0.7; ctx.stroke();
-
-      // Label at line end, rotated to read along the radius
-      ctx.save();
-      ctx.translate(tx, ty);
-      let rot = angle + Math.PI / 2;
-      const normRot = ((rot % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-      if (normRot > Math.PI / 2 && normRot < Math.PI * 3 / 2) rot += Math.PI;
-      ctx.rotate(rot);
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const word = type === 'max' ? cfg.maxWord : cfg.minWord;
-      ctx.font = `italic ${W * .016}px 'Crimson Pro',serif`;
-      ctx.fillStyle = s.color; ctx.globalAlpha = 0.75;
-      ctx.fillText(`${word}: ${cfg.fmt(val)}`, 0, 0);
-      ctx.restore(); ctx.restore();
+      marks.push({
+        color: s.color, angle, peakR, out, value, date,
+        textW: Math.max(w1, w2),
+        textR: peakR + out * (W * .017 + W * .010),
+      });
     });
   });
+
+  // ── Pass 2: separate labels that would print on top of each other ─────────
+  const clash = (a, b) => {
+    let d = Math.abs(a.angle - b.angle);
+    if (d > Math.PI) d = Math.PI * 2 - d;
+    return d * Math.min(a.textR, b.textR) < (a.textW + b.textW) / 2 + W * 0.004
+        && Math.abs(a.textR - b.textR) < half * 2;
+  };
+  const settled = [];
+  // Innermost first, so a shifted label is always pushed into space that has
+  // not been claimed yet.
+  marks.sort((a, b) => a.peakR - b.peakR);
+  for (const m of marks) {
+    for (let n = 0; n < 4 && settled.some(p => clash(m, p)); n++) {
+      m.textR += m.out * half * 2.1;
+    }
+    settled.push(m);
+  }
+
+  // ── Draw ──────────────────────────────────────────────────────────────────
+  for (const m of settled) {
+    const lineStart = m.peakR + m.out * dotR;
+    const [dotX, dotY] = polar(CX, CY, m.angle, m.peakR);
+    const [lx1, ly1]   = polar(CX, CY, m.angle, lineStart);
+    const [lx2, ly2]   = polar(CX, CY, m.angle, m.textR - m.out * half * 0.95);
+    const [tx, ty]     = polar(CX, CY, m.angle, m.textR);
+
+    ctx.save();
+
+    // Marker centred on the ring's edge: paper-filled so the profile line reads
+    // as passing behind it rather than through it.
+    ctx.beginPath(); ctx.arc(dotX, dotY, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = INK.paper; ctx.globalAlpha = 1.0; ctx.fill();
+    ctx.strokeStyle = m.color; ctx.lineWidth = hairline(W, 0.0022, 1.2); ctx.stroke();
+
+    // Leader from the marker to the label.
+    ctx.beginPath(); ctx.moveTo(lx1, ly1); ctx.lineTo(lx2, ly2);
+    ctx.strokeStyle = m.color; ctx.lineWidth = hairline(W, 0.0013, 0.7); ctx.globalAlpha = 0.6; ctx.stroke();
+
+    // Label along the tangent, flipped on the lower half so it stays upright.
+    ctx.save();
+    ctx.translate(tx, ty);
+    ctx.rotate(uprightTangent(m.angle));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `italic ${size}px 'Crimson Pro',serif`;
+    ctx.fillStyle = m.color; ctx.globalAlpha = 0.92;
+    haloText(ctx, m.value, 0, -size * 0.44, size * 0.55);
+    ctx.font = `${size * 0.76}px Cinzel,serif`;
+    ctx.fillStyle = INK.light; ctx.globalAlpha = 0.75;
+    haloText(ctx, m.date, 0, size * 0.56, size * 0.55);
+    ctx.restore(); ctx.restore();
+  }
 }
