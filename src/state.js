@@ -5,14 +5,21 @@ import { gaussianSmooth } from './utils/smooth.js';
 // Ring display order (innermost → outermost)
 export const ringOrder = ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'];
 
+// The untouched state of one ring. Exported because src/data/prefs.js diffs
+// against it: only the fields a user actually changed are persisted, so a later
+// build's new default color (or visibility) still reaches everyone who never
+// overrode it.
+export function defaultRingState(r) {
+  return { visible: r.defaultVisible !== false, color: r.color, thickness: 1.0, opacity: 1.0, smooth: true, normMode: r.defaultNormMode, collapsed: true };
+}
+
 // Per-ring UI state
 export const ringState = {};
-RING_DEFS.forEach(r => {
-  ringState[r.id] = { visible: r.defaultVisible !== false, color: r.color, thickness: 1.0, opacity: 1.0, smooth: true, normMode: r.defaultNormMode };
-});
+RING_DEFS.forEach(r => { ringState[r.id] = defaultRingState(r); });
 
 // Global display toggles
-export const displayState = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true, phenology: true, phenoMammals: true, phenoFish: true, phenoBirds: true, phenoInsects: true, phenoPlants: true };
+export const DISPLAY_DEFAULTS = { moon: true, axis: true, ticks: true, actuals: true, actualsSmooth: false, windBarbs: false, ringGap: 0.010, holidays: true, holidayChristian: true, holidayJewish: true, holidayWicca: true, holidayIslamic: true, phenology: true, phenoMammals: true, phenoFish: true, phenoBirds: true, phenoInsects: true, phenoPlants: true };
+export const displayState = { ...DISPLAY_DEFAULTS };
 
 function precomputeSmoothed(data) {
   const out = {};

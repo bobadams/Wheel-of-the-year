@@ -37,6 +37,7 @@ import {
   hasSeries, newestDate, daysSince, actualsForDisplay, mergeActuals,
   entriesToDates, normalsFromData, isSamePlace, coordSuffix, eviProgressRecorder,
 } from './data/locationCache.js';
+import { applySavedPrefs, restoreOrder, syncDisplayToggles, setLastLocation } from './data/prefs.js';
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
 function draw() {
@@ -340,30 +341,42 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
 }
 
 // ─── Live fetch ──────────────────────────────────────────────────────────────
-async function fetchCity() {
-  const q = document.getElementById('cityInput').value.trim();
-  if (!q) return;
-  setStatus('loading', 'Geocoding…');
-  setLoading(true);
+/**
+ * Show an already-resolved place: paint it at once, load its data, and record it
+ * as the location to reopen on the next visit. Coordinates are remembered
+ * alongside the name, so restoring one skips the geocoder entirely.
+ *
+ * @param {boolean} opts.remember false while restoring a shared `?s=` link,
+ *   whose city belongs to whoever built the link, not to this browser.
+ */
+async function showLocation({ name, lat, lon, found = false, remember = true }) {
   setActuals(null); setTodayDOY(null);
   setPhenologyEvents([]);
   setEviProgress(false);
 
+  // Draw immediately with just location so decorations/labels appear right away
+  setCurrentData({ name, lat, lon });
+  setActivePreset('');
+  refreshPresets();
+  refreshSourceBadges();
+  draw();
+
+  if (remember) setLastLocation({ name, lat, lon });
+  setStatus('loading', `${found ? `Found ${name}` : name} — checking saved data…`);
+  await loadLocation({ key: locationKey({ name, lat, lon }), name, lat, lon });
+}
+
+async function fetchCity({ remember = true } = {}) {
+  const q = document.getElementById('cityInput').value.trim();
+  if (!q) return;
+  setStatus('loading', 'Geocoding…');
+  setLoading(true);
+
   try {
     const geo = await geocode(q);
-    const shortName = geo.name.split(',').slice(0, 2).join(',').trim();
-
-    // Draw immediately with just location so decorations/labels appear right away
-    setCurrentData({ name: shortName, lat: geo.lat, lon: geo.lon });
-    setActivePreset('');
-    refreshPresets();
-    refreshSourceBadges();
-    draw();
-
-    setStatus('loading', `Found ${shortName} — checking saved data…`);
-    await loadLocation({
-      key: locationKey({ name: shortName, lat: geo.lat, lon: geo.lon }),
-      name: shortName, lat: geo.lat, lon: geo.lon,
+    await showLocation({
+      name: geo.name.split(',').slice(0, 2).join(',').trim(),
+      lat: geo.lat, lon: geo.lon, found: true, remember,
     });
   } catch (e) {
     setStatus('error', e.message);
@@ -397,6 +410,7 @@ function loadPreset(p) {
   setPhenologyEvents([]);
   document.getElementById('cityInput').value = p.city;
   setActivePreset(p.label);
+  setLastLocation({ preset: p.label });
   refreshPresets(); refreshSourceBadges(); draw();
   setStatus('ok', `Loaded built-in data for ${p.data.name} — fetching actuals overlay…`);
   // Normals ship in the bundle; the actuals overlay and the phenology band come
@@ -448,10 +462,7 @@ function applyUrlParams() {
   let p;
   try { p = JSON.parse(decodeURIComponent(raw)); } catch { return false; }
 
-  if (Array.isArray(p.order)) {
-    ringOrder.length = 0;
-    p.order.forEach(id => { if (ringState[id]) ringOrder.push(id); });
-  }
+  restoreOrder(p.order);
 
   if (p.rings) {
     Object.entries(p.rings).forEach(([id, r]) => {
@@ -479,9 +490,7 @@ function applyUrlParams() {
   }
 
   // Sync display toggle button classes
-  document.querySelectorAll('[data-display-key]').forEach(btn => {
-    btn.classList.toggle('on', !!displayState[btn.dataset.displayKey]);
-  });
+  syncDisplayToggles();
 
   // Rebuild ring controls with restored state (reads displayState.ringGap automatically)
   buildRingControls();
@@ -489,7 +498,9 @@ function applyUrlParams() {
 
   if (p.city) {
     document.getElementById('cityInput').value = p.city;
-    fetchCity();
+    // A link's city is not this browser's choice, so it is not recorded as the
+    // one to reopen — the visitor's own saved default survives the visit.
+    fetchCity({ remember: false });
   }
 
   return true;
@@ -720,6 +731,13 @@ function init() {
   resizeCanvas();
 
   setDrawCallback(draw);
+
+  // Layering is defaults → saved prefs → URL params. The saved ones have to land
+  // before the panel is built, since the controls render from ringState /
+  // displayState rather than reading them later.
+  const savedLocation = applySavedPrefs();
+  syncDisplayToggles();
+
   buildRingControls(); // also calls refreshSourceBadges internally
   rebuildLegend();
   draw();
@@ -781,10 +799,27 @@ function init() {
     presetsEl.appendChild(btn);
   });
 
-  // Restore from URL params if present; otherwise load the default preset's
-  // actuals overlay and phenology band (its normals ship in the bundle).
+  // A shared link wins over anything saved locally — it should show what it
+  // encodes, whatever this visitor happens to have stored.
   if (applyUrlParams()) return;
 
+  // Otherwise reopen the location this browser last loaded.
+  const savedPreset = savedLocation?.preset && PRESETS.find(p => p.label === savedLocation.preset);
+  if (savedPreset) { loadPreset(savedPreset); return; }
+
+  if (savedLocation?.name && savedLocation.lat != null && savedLocation.lon != null) {
+    // Stored resolved, so this skips the geocoder — and the location cache
+    // usually has everything, making it a near-instant repaint.
+    document.getElementById('cityInput').value = savedLocation.name;
+    setLoading(true);
+    showLocation(savedLocation)
+      .catch(e => { setStatus('error', e.message); setEviProgress(false); })
+      .finally(() => setLoading(false));
+    return;
+  }
+
+  // Nothing saved: the default preset's actuals overlay and phenology band (its
+  // normals ship in the bundle).
   const p0 = PRESETS[0].data;
   setStatus('loading', 'Fetching actuals for past year…');
   loadLocation({ key: locationKey(p0), name: p0.name, lat: p0.lat, lon: p0.lon, skipNormals: true })

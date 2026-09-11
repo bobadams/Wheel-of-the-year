@@ -1,5 +1,6 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { ringOrder, ringState, displayState, currentData } from '../state.js';
+import { savePrefs } from '../data/prefs.js';
 import { rebuildLegend } from './legend.js';
 import { showEviAnalysis } from './eviAnalysis.js';
 
@@ -32,7 +33,7 @@ export function buildRingControls() {
   gapDiv.querySelector('#ringGapSlider').addEventListener('input', e => {
     displayState.ringGap = parseFloat(e.target.value);
     gapDiv.querySelector('#ringGapVal').textContent = Math.round(displayState.ringGap * 1000) + 'px';
-    _draw?.();
+    _draw?.(); savePrefs();
   });
   c.appendChild(gapDiv);
 
@@ -91,7 +92,7 @@ export function buildRingControls() {
       const fromIdx = ringOrder.indexOf(fromId), toIdx = ringOrder.indexOf(id);
       if (fromIdx !== toIdx) {
         ringOrder.splice(fromIdx, 1); ringOrder.splice(toIdx, 0, fromId);
-        buildRingControls(); _draw?.(); rebuildLegend();
+        buildRingControls(); _draw?.(); rebuildLegend(); savePrefs();
       }
     });
 
@@ -152,6 +153,7 @@ function handleControlClick(e) {
     ringState[id].collapsed = !ringState[id].collapsed;
     row.classList.toggle('expanded', !ringState[id].collapsed);
     row.querySelector('.ring-subcontrols').classList.toggle('collapsed', ringState[id].collapsed);
+    savePrefs();
     return;
   }
   const toggle = e.target.closest('[data-action="toggleRing"]');
@@ -166,7 +168,7 @@ function handleControlClick(e) {
     ringState[id].normMode = norm;
     normBtn.closest('.norm-btn-group').querySelectorAll('.norm-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.norm === norm));
-    _draw?.(); return;
+    _draw?.(); savePrefs(); return;
   }
 }
 
@@ -184,7 +186,7 @@ function moveRing(id, dir) {
   const i = ringOrder.indexOf(id), j = i + dir;
   if (j < 0 || j >= ringOrder.length) return;
   [ringOrder[i], ringOrder[j]] = [ringOrder[j], ringOrder[i]];
-  buildRingControls(); _draw?.(); rebuildLegend();
+  buildRingControls(); _draw?.(); rebuildLegend(); savePrefs();
 }
 
 function toggleRing(btn) {
@@ -193,31 +195,31 @@ function toggleRing(btn) {
   btn.classList.toggle('on', ringState[id].visible);
   const sub = btn.closest('.ring-row').querySelector('.ring-subcontrols');
   if (sub) sub.style.cssText = ringState[id].visible ? '' : 'opacity:.4;pointer-events:none';
-  _draw?.(); rebuildLegend();
+  _draw?.(); rebuildLegend(); savePrefs();
 }
 
 function updateRing(id, prop, val) {
   val = parseFloat(val); ringState[id][prop] = val;
   if (prop === 'thickness') document.getElementById(`sv-thick-${id}`).textContent = val.toFixed(1) + '×';
   if (prop === 'opacity')   document.getElementById(`sv-opac-${id}`).textContent  = Math.round(val * 100) + '%';
-  _draw?.();
+  _draw?.(); savePrefs();
 }
 
 function toggleSmooth(btn) {
   const id = btn.dataset.id;
   ringState[id].smooth = !ringState[id].smooth;
   btn.classList.toggle('on', ringState[id].smooth);
-  _draw?.();
+  _draw?.(); savePrefs();
 }
 
 function updateRingColor(id, val) {
   ringState[id].color = val;
   document.getElementById(`dot-${id}`).style.background = val;
-  _draw?.(); rebuildLegend();
+  _draw?.(); rebuildLegend(); savePrefs();
 }
 
 export function toggleDisplay(btn, key) {
   displayState[key] = !displayState[key];
   btn.classList.toggle('on', displayState[key]);
-  _draw?.();
+  _draw?.(); savePrefs();
 }

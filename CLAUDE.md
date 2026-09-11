@@ -38,7 +38,8 @@ No backend, no database, no runtime dependencies.
     ├── data/
     │   ├── ringDefs.js           # 5 ring definitions (type, color, range, labels)
     │   ├── presets.js            # Built-in Oakland, CA preset (365-point arrays)
-    │   └── locationCache.js      # Client half of the server-side location cache
+    │   ├── locationCache.js      # Client half of the server-side location cache
+    │   └── prefs.js              # localStorage: UI preferences + last location
     ├── draw/
     │   ├── canvas.js             # Math helpers: doy2angle, polar, norm
     │   ├── ring.js               # Draw concentric ring arcs (one arc per day)
@@ -206,6 +207,11 @@ State lives in `src/state.js` as plain mutable objects. No framework reactivity.
 - `displayState` — global toggles: `moon`, `axis`, `ticks`, `actuals`
 - `currentData` — 365-point arrays for the currently displayed location
 - `actuals` — past ~185 days of real observations
+
+`ringOrder` / `ringState` / `displayState` are **hydrated from localStorage at
+startup** and written back on every change — see "Persisted UI preferences".
+`state.js` also exports the pristine defaults (`defaultRingState()`,
+`DISPLAY_DEFAULTS`) that the persistence layer diffs against.
 
 ### Ring definitions (`src/data/ringDefs.js`)
 Each ring has: `id`, `label`, `key` (property name in data), `unit`, `color`, `lo`/`hi` normalization range, `minWord`/`maxWord` label text.
@@ -608,6 +614,49 @@ cache — bundled normals are never uploaded, which keeps an incomplete preset
 Local dev: without `VITE_IMAGE_URL` set, every cache call fails softly and the
 app refetches everything exactly as it did before the cache existed.
 
+## Persisted UI preferences — the wheel reopens as you left it
+
+`src/data/prefs.js` keeps every control-panel choice **and the location last
+loaded** in localStorage (`wheel-of-the-year:prefs:v1`), so a return visit opens
+on the same city with the same rings, colors, order, and toggles. This is
+per-browser and unrelated to the server-side location cache above, which stores
+*data* rather than *choices*.
+
+- **Reading:** `applySavedPrefs()` runs in `init()` **before**
+  `buildRingControls()` — the panel renders from `ringState` / `displayState`
+  once and never re-reads them, so anything applied afterwards would not show up
+  in the controls. It returns the saved location for `init()` to reopen.
+- **Writing:** `savePrefs()` is called from each mutation handler in
+  `ui/controls.js` (and `setLastLocation()` from `main.js`). It is throttled by
+  `SAVE_DEBOUNCE_MS` so a slider drag writes a few times rather than per step,
+  with a `pagehide` flush so a change made in the last moment still lands.
+
+**Only *changed* values are stored.** Each ring is diffed against
+`defaultRingState(r)` and the toggles against `DISPLAY_DEFAULTS` (both exported
+from `state.js`). That is deliberate: a stored full snapshot would freeze today's
+defaults into every existing browser, so changing a ring's default color or
+`defaultVisible` in `ringDefs.js` would silently reach nobody who had ever
+loaded the site. Keep the two default sources authoritative — never inline a
+copy of them in `prefs.js`.
+
+**Order restore tolerates a changed ring list.** `restoreOrder()` drops ids this
+build no longer has and **appends any ring the stored order predates** —
+otherwise a newly added ring would be missing from both the wheel and the
+control panel for every returning visitor. `applyUrlParams()` uses the same
+helper, for the same reason.
+
+### Precedence: defaults → saved prefs → `?s=` link
+
+A shared link wins over saved prefs, so it always shows what it encodes. It is
+also **not written back**: `fetchCity({ remember: false })` on that path skips
+`setLastLocation`, so opening someone else's wheel does not replace your own
+default city. (The first control the visitor then touches saves the state they
+are looking at, as usual — that is a real user choice.)
+
+The saved location is stored **resolved** — `{ name, lat, lon }` for a fetched
+city, `{ preset: label }` for a built-in — so restoring one skips the Nominatim
+round-trip entirely and goes straight to the location cache.
+
 ## No Tests
 
 There is no test suite. The project has no test runner, no test files, and no CI pipeline. When making changes:
@@ -645,3 +694,5 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Change how often EVI progress is checkpointed | `EVI_FLUSH_EVERY` in `src/data/locationCache.js` |
 | Change the cache top-up / retention windows | `src/fetch/actuals.js` (`WINDOW_DAYS`, `OVERLAP_DAYS`), `server/climate-cache.mjs` (`RETAIN_DAYS`), `locationCache.js` (`DISPLAY_DAYS`) |
 | Add a stage to the location load | `loadLocation()` in `src/main.js` — paint it, then `record()` its own patch |
+| Change what UI state persists across visits | `RING_FIELDS` in `src/data/prefs.js`, and the matching default in `defaultRingState()` / `DISPLAY_DEFAULTS` (`src/state.js`) |
+| Add a control that must persist | call `savePrefs()` from its handler in `src/ui/controls.js` |
