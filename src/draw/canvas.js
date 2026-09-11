@@ -37,3 +37,63 @@ export function catmullRomPath(ctx, pts) {
     );
   }
 }
+
+/**
+ * Rotation that keeps tangential text upright anywhere on the wheel.
+ * Text set at `a + π/2` runs along the circle; on the lower half that comes out
+ * upside-down, so it is flipped a further half-turn.
+ */
+export function uprightTangent(a) {
+  let rot = a + Math.PI / 2;
+  const n = ((rot % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  if (n > Math.PI / 2 && n < Math.PI * 3 / 2) rot += Math.PI;
+  return rot;
+}
+
+/**
+ * Render `text` along a circular arc of radius `r`, centred (tangentially) on
+ * the angle `aCenter`. Each glyph is rotated to the local tangent so the whole
+ * label bends with the circle. On the lower half of the wheel the run is
+ * reversed so the text stays upright and reads left to right.
+ *
+ * @param {(ctx, ch, x, y) => void} [opts.paint] per-glyph painter; defaults to
+ *   fillText. Used to give a label a paper halo one glyph at a time.
+ * @param {number} [opts.tracking] extra space between glyphs, in px. Arc text
+ *   is laid out glyph by glyph anyway, so tracking is free here — and unlike
+ *   padding the string with spaces, it survives the SVG export.
+ */
+export function drawArcText(ctx, cx, cy, text, aCenter, r, opts = {}) {
+  const { paint, tracking = 0 } = opts;
+  const chars  = [...text];
+  const widths = chars.map(c => ctx.measureText(c).width + tracking);
+  const total  = widths.reduce((s, w) => s + w, 0) - tracking;
+  // Flip when the label sits on the bottom of the wheel (canvas y grows down).
+  const flip = Math.sin(aCenter) > 0;
+  const dir  = flip ? -1 : 1;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Walk from the leading edge of the label to its trailing edge.
+  let a = aCenter - dir * (total / r) / 2;
+  for (let i = 0; i < chars.length; i++) {
+    const charAngle = widths[i] / r;
+    const aMid = a + dir * charAngle / 2;
+    const [x, y] = polar(cx, cy, aMid, r);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(aMid + (flip ? -Math.PI / 2 : Math.PI / 2));
+    if (chars[i] !== ' ') {
+      if (paint) paint(ctx, chars[i], 0, 0); else ctx.fillText(chars[i], 0, 0);
+    }
+    ctx.restore();
+    a += dir * charAngle;
+  }
+}
+
+/** Angular width, in radians, that `text` occupies as arc text at radius `r`. */
+export function arcTextSpan(ctx, text, r, tracking = 0) {
+  const chars = [...text];
+  const w = chars.reduce((s, c) => s + ctx.measureText(c).width, 0)
+    + tracking * Math.max(0, chars.length - 1);
+  return w / r;
+}

@@ -36,17 +36,24 @@ No backend, no database, no runtime dependencies.
     ├── state.js                  # Centralized mutable state
     ├── styles.css                # All styling (CSS custom properties, responsive)
     ├── data/
-    │   ├── ringDefs.js           # 5 ring definitions (type, color, range, labels)
+    │   ├── ringDefs.js           # 9 ring definitions (colors, units, scale ranges, provenance)
     │   ├── presets.js            # Built-in Oakland, CA preset (365-point arrays)
+    │   ├── summary.js            # The year in a few figures — feeds the cartouche and the key
     │   ├── locationCache.js      # Client half of the server-side location cache
     │   └── prefs.js              # localStorage: UI preferences + last location
     ├── draw/
-    │   ├── canvas.js             # Math helpers: doy2angle, polar, norm
+    │   ├── theme.js              # Ink palette, the radial register plan, tracking + halo helpers
+    │   ├── canvas.js             # Math helpers: doy2angle, polar, norm, arc text
+    │   ├── wheel.js              # paintWheel() — the whole drawing, screen and poster alike
     │   ├── ring.js               # Draw concentric ring arcs (one arc per day)
     │   ├── layout.js             # Compute inner radius + thickness per visible ring
-    │   ├── decorations.js        # Moon phases, solstice/equinox axes, ticks, center text
-    │   ├── labels.js             # Min/max markers and value labels
-    │   └── actuals.js            # "Actuals" overlay: smoothed line + today dot
+    │   ├── decorations.js        # Calendar band, moon lane, solar cross, centre cartouche
+    │   ├── labels.js             # Extreme markers: value, date, collision resolution
+    │   └── actuals.js            # "Actuals" overlay: observed-year line + today marker
+    ├── export/
+    │   └── svg.js                # canvas2svg plumbing: patches, embedded fonts, renderSVG()
+    ├── print/
+    │   └── poster.js             # Portrait large-format sheet + the print window
     ├── fetch/
     │   ├── climate.js            # Geocode city → fetch ERA5 30-yr normals → 365-day arrays
     │   ├── ndvi.js               # Fetch MODIS 16-day NDVI composites → smooth → 365-day array
@@ -186,6 +193,96 @@ Check tunnel status:
 ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && cloudflared tunnel info macmini"
 ```
 
+## Drawing the wheel
+
+### One drawing, two sizes
+
+`paintWheel()` in `src/draw/wheel.js` is the whole picture. Every module it calls
+places things as a **fraction of `canvas.W`** and around `canvas.CX/CY`, so
+"scaling the wheel" is nothing more than pointing those fields somewhere else:
+the screen sets them to a square canvas, and `src/print/poster.js` sets them to a
+square region of a 24 × 36 inch sheet before calling the same function. Nothing
+in the draw code knows which it is drawing.
+
+Two flags on `canvas` change *what* is drawn rather than how big:
+
+| flag | set by | effect |
+|---|---|---|
+| `svgExport` | `renderSVG()` | holiday symbols emit drawn paths instead of Unicode glyphs, which no longer depend on the viewer's serif coverage |
+| `print` | `paintPoster()` | detail that only earns its space at wall size: full month names, the complete set of centre figures |
+
+If you add annotation that should differ between screen and paper, branch on
+`canvas.print` — **never on a pixel threshold**. A `W > 900` test made an 18 × 24
+poster set abbreviated month names while a 24 × 36 set full ones, which is a
+difference in sheet size, not in how far away the reader is standing.
+
+### The radial registers live in one place
+
+`R` in `src/draw/theme.js` holds every radius the wheel uses, outward from the
+centre hole to the outermost phenology label at ~0.490·W. They are in one table
+because the constraint that matters is between them: the annotation bands are
+packed close enough that moving one without looking at its neighbours silently
+overlaps them. (Holiday labels and phenology arcs used to occupy overlapping
+radii; nothing surfaced it because the phenology band is empty until the service
+answers.)
+
+Reading outward: centre cartouche · data rings · solstice/equinox labels ·
+calendar band · moon lane · holiday symbols and labels · phenology arcs.
+
+### Tracking has to be drawn, not spaced
+
+Letterspaced small caps are set with `drawTracked()` (straight) or
+`drawArcText(…, { tracking })` (curved), both of which place each glyph by hand.
+Padding a string with spaces looks right on canvas and then collapses in the SVG
+export — XML folds the run — so a letterspaced masthead prints as
+`WHEELOFTHEYEAR`. There is no canvas property for tracking that survives the
+export either.
+
+### Annotation reads over the rings via a halo, not a plate
+
+`haloText()` strokes the glyph in the paper colour before filling it. That is how
+an extreme label, a season label or a holiday name stays legible where it crosses
+a ring fill without a box around it. Anything drawn over the rings should use it.
+
+## Printing a poster
+
+`printPoster(sizeKey)` composes a **portrait, self-contained SVG** of the whole
+sheet — masthead, wheel, printed key, footer — and opens it in a window whose
+`@page` rule is the exact stock size, so the browser's *Save as PDF* produces a
+PDF of precisely those dimensions with no further setting. `downloadPosterSVG()`
+hands over the same sheet as a file for a print shop. Stocks are in
+`POSTER_SIZES` (18 × 24, 24 × 36, A2, A1, A0).
+
+Four things about it are load-bearing:
+
+- **The paper is a `<rect>`, not a CSS background.** Chrome prints with
+  "background graphics" off by default; a CSS-painted sheet would come out white.
+- **The SVG is grafted on as parsed DOM, never written into the HTML string.**
+  A megabyte of markup through `document.write` is parsed in chunks, and the
+  break lands inside the foreign content: the sheet arrives holding its `<defs>`
+  and nothing else, and prints as a blank page *of exactly the right size*. If a
+  poster ever prints blank, check `document.querySelector('.sheet svg').children`
+  before suspecting the drawing code.
+- **The key is laid out before the wheel.** Its four columns are measured, the
+  lead paragraph is wrapped, and the wheel is then given whatever height is left
+  — which is why the wheel grows when rings are switched off.
+- **A block is the unit of column packing.** Splitting one puts its heading in a
+  different column from half its entries; only a block too tall for any column is
+  broken up.
+
+### Two canvas2svg bugs the export patches
+
+`patchC2S()` in `src/export/svg.js` fixes both. They are easy to reintroduce:
+
+- **`setLineDash` is not part of canvas2svg's style stack.** The patch pushes and
+  pops the dash alongside `save`/`restore`. Without that, one dashed stroke — the
+  observed-year line, a legend swatch — leaks its pattern into *every* stroke
+  drawn afterwards. The failure is silent and print-only: the same code draws
+  solid on screen.
+- **canvas2svg emits `width`/`height` but no `viewBox`.** The patch adds one.
+  Without it the document cannot be scaled to a container, so the print window
+  crops the sheet to its top-left corner instead of fitting it to the page.
+
 ## Key Conventions
 
 ### Day-of-Year (DOY)
@@ -214,9 +311,12 @@ startup** and written back on every change — see "Persisted UI preferences".
 `DISPLAY_DEFAULTS`) that the persistence layer diffs against.
 
 ### Ring definitions (`src/data/ringDefs.js`)
-Each ring has: `id`, `label`, `key` (property name in data), `unit`, `color`, `lo`/`hi` normalization range, `minWord`/`maxWord` label text.
+Each ring has: `id`, `label`, `unit`, `color`, `normLo`/`normHi` fallback range,
+`defaultNormMode`, and `source` — the short provenance printed in the poster key.
+Colors are deliberately desaturated earth pigments: a saturated screen green has
+nowhere to go in print, and nine rings have to stay tellable apart on paper.
 
-The 5 rings: `temperature`, `rainfall`, `daylight`, `ndvi`, `wind`.
+The 9 rings: `temp`, `rain`, `daylight`, `evi`, `wind`, `pm25`, `visibility`, `snow`, `cloud` — the last four hidden by default.
 
 ### Data fetching patterns
 - All fetches use `async/await` with `try/catch`
@@ -663,7 +763,12 @@ There is no test suite. The project has no test runner, no test files, and no CI
 - Test visually in the browser with `npm run dev`
 - Verify both the Oakland preset (`loadPreset`) and a live city fetch (`fetchCity`) render correctly
 - Check mobile layout at `<820px` viewport width
-- Export PNG (`exportPNG`) and verify the output
+- Export the wheel SVG and open it — **the export is a second renderer**, and
+  several bugs (the dash leak, the missing viewBox, collapsed letterspacing) show
+  up only there, never on the canvas
+- Print a poster and check it at both a small and a large stock, with rings
+  toggled on and off: the key's column packing and the wheel's size both depend
+  on how much there is to print
 
 ## Common Pitfalls
 
@@ -680,7 +785,11 @@ There is no test suite. The project has no test runner, no test files, and no CI
 |------|---------------|
 | Add a new data ring | `ringDefs.js`, `controls.js` (legend), `fetch/climate.js` or new fetch module, `state.js` |
 | Change color scheme | `styles.css` (custom properties) and `ringDefs.js` (default colors) |
-| Add a new decoration | `draw/decorations.js` and call it in `main.js` draw loop |
+| Add a new decoration | `draw/decorations.js`, then call it from `paintWheel()` in `draw/wheel.js` |
+| Move a ring or annotation band | `R` in `draw/theme.js` — check its neighbours in the same table |
+| Change the ring palette or ink | `draw/ringDefs.js` (rings) and `INK` in `draw/theme.js` (everything else) |
+| Change the poster layout, key, or stock sizes | `src/print/poster.js` (`paintPoster`, `keyBlocks`, `POSTER_SIZES`) |
+| Change what the centre cartouche shows | `drawCenter()` in `draw/decorations.js` and `yearSummary()` in `data/summary.js` |
 | Adjust normalization ranges | `ringDefs.js` (`lo`/`hi` fields) |
 | Update Oakland preset data | `npm run generate-presets` |
 | Add a new preset city | `src/data/presets.js` and preset button in `index.html` or `main.js` |

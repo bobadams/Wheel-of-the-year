@@ -50,8 +50,24 @@
     <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Plants</span><button class="toggle on" data-display-key="phenoPlants" onclick="toggleDisplay(this,'phenoPlants')"></button></div>
     <div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Refresh events</span><button class="btn btn-outline" style="padding:.1rem .5rem;font-size:.8rem" onclick="refreshPhenology()" title="Re-generate this location's events, bypassing the cache">↻</button></div>
     <hr class="divider">
-    <div style="display:flex;gap:.4rem;margin-top:.2rem">
-      <button class="btn btn-outline" style="flex:1" onclick="exportSVG()">⬇ Export SVG</button>
+    <div class="panel-title">Print &amp; Share</div>
+    <div class="poster-row">
+      <label class="misc-label" for="posterSize">Poster size</label>
+      <select id="posterSize" class="poster-size">
+        <option value="18x24">18 × 24 in</option>
+        <option value="24x36" selected>24 × 36 in</option>
+        <option value="A2">A2 · 420 × 594 mm</option>
+        <option value="A1">A1 · 594 × 841 mm</option>
+        <option value="A0">A0 · 841 × 1189 mm</option>
+      </select>
+    </div>
+    <button class="btn" style="width:100%" onclick="exportPoster()"
+      title="Compose a portrait poster — masthead, wheel and printed key — and open the print dialog. Choose “Save as PDF”.">⌸ Print Poster PDF</button>
+    <div style="display:flex;gap:.4rem">
+      <button class="btn btn-outline" style="flex:1" onclick="exportPosterSVG()" title="The same poster as a vector SVG, for a print shop">⬇ Poster SVG</button>
+      <button class="btn btn-outline" style="flex:1" onclick="exportSVG()" title="Just the wheel, as vector SVG">⬇ Wheel SVG</button>
+    </div>
+    <div style="display:flex;gap:.4rem">
       <button class="btn btn-outline" style="flex:1" id="copyLinkBtn" onclick="copyLink()">⎘ Copy Link</button>
     </div>
   </div>
@@ -60,8 +76,8 @@
 <div class="presets" id="presetsEl"></div>
 <div class="legend" id="legendEl"></div>
 <p class="data-note">
-  Ring width = normalized daily value (wider arc = higher). Hover anywhere for daily values — or monthly for built-in presets.<br>
-  Filled area = 30-year ERA5 climate normals. <strong>Solid line</strong> = actuals (past 6 months, temp &amp; rain via <a href="https://open-meteo.com" target="_blank">Open-Meteo</a>, vegetation via <a href="https://modis.ornl.gov" target="_blank">MODIS</a>).<br>
+  One turn is one year, clockwise from the winter solstice at the top. A band's reach out from its own baseline is that day's value — hover for the numbers.<br>
+  Filled bands are 30-year ERA5 climate normals; the <strong>dashed line</strong> is the past twelve months as observed (weather via <a href="https://open-meteo.com" target="_blank">Open-Meteo</a>, vegetation via <a href="https://modis.ornl.gov" target="_blank">MODIS</a>).<br>
   Geocoding via <a href="https://nominatim.openstreetmap.org" target="_blank">OpenStreetMap</a>
 </p>
 <div class="tooltip" id="tooltip"></div>

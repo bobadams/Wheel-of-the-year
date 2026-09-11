@@ -2,6 +2,7 @@ import { RING_DEFS } from '../data/ringDefs.js';
 import { canvas, ringOrder, ringState, displayState, currentData, actuals } from '../state.js';
 import { doy2angle, norm, SOLSTICE_OFFSET } from '../draw/canvas.js';
 import { DIM, MON_S } from '../draw/decorations.js';
+import { R } from '../draw/theme.js';
 
 const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', evi: '🌿', wind: '💨' };
 const ACTUALS_RINGS = new Set(['temp', 'rain', 'evi']);
@@ -16,7 +17,8 @@ export function setupTooltip() {
     const mx = (e.clientX - rect.left) * sx, my = (e.clientY - rect.top) * sy;
     const dx = mx - canvas.CX, dy = my - canvas.CY;
     const r = Math.sqrt(dx * dx + dy * dy);
-    if (r < canvas.W * .055 || r > canvas.W * .455) { tip.style.display = 'none'; return; }
+    // Only the data rings carry per-day values worth reporting.
+    if (r < canvas.W * R.ringStart || r > canvas.W * R.ringEnd) { tip.style.display = 'none'; return; }
 
     let frac = (Math.atan2(dy, dx) - SOLSTICE_OFFSET) / (2 * Math.PI);
     frac = ((frac % 1) + 1) % 1;

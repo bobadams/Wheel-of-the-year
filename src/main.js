@@ -1,23 +1,14 @@
 import './styles.css';
-import C2S from 'canvas2svg';
 
-import { RING_DEFS } from './data/ringDefs.js';
 import { PRESETS } from './data/presets.js';
 import {
   canvas, ringOrder, ringState, displayState,
-  currentData, smoothedData, actuals,
+  currentData, actuals,
   setCurrentData, mergeCurrentData, setActivePreset, setActuals, setTodayDOY,
   setPhenologyEvents, setPhenologyCategory,
 } from './state.js';
 import { computeRingLayouts } from './draw/layout.js';
-import { drawRing } from './draw/ring.js';
-import { computeNormBounds } from './draw/normalize.js';
-import { drawMoon, drawTicks, drawAxes, drawCenter } from './draw/decorations.js';
-import { drawHolidays } from './draw/holidays.js';
-import { drawPhenology } from './draw/phenology.js';
-import { drawMinMaxMarkers } from './draw/labels.js';
-import { drawWindBarbs } from './draw/windBarbs.js';
-import { drawActualsLine, drawTodayDot } from './draw/actuals.js';
+import { paintWheel, paintPaper } from './draw/wheel.js';
 import { geocode, fetchClimateAPI, aggregateClimate } from './fetch/climate.js';
 import { fetchModisEVI, eviProxyFallback } from './fetch/evi.js';
 import { fetchPm25 } from './fetch/pm25.js';
@@ -31,6 +22,8 @@ import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
 import { setupTooltip } from './ui/tooltip.js';
+import { buildEmbeddedFontStyle, renderSVG, downloadFile, fileStem } from './export/svg.js';
+import { printPoster, downloadPosterSVG, POSTER_SIZES, DEFAULT_SIZE } from './print/poster.js';
 import { showRingChart } from './ui/ringChart.js';
 import {
   locationKey, loadLocationCache, saveLocationCache,
@@ -41,46 +34,9 @@ import { applySavedPrefs, restoreOrder, syncDisplayToggles, setLastLocation } fr
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
 function draw() {
-  const { ctx, W, H, CX, CY } = canvas;
-  const layouts = computeRingLayouts();
-  const normBounds = computeNormBounds(currentData);
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#faf7f2'; ctx.fillRect(0, 0, W, H);
-
-  ringOrder.forEach(id => {
-    const s = ringState[id];
-    if (!s.visible || !layouts[id]) return;
-    const r = RING_DEFS.find(r => r.id === id);
-    const { innerFrac, thickFrac } = layouts[id];
-    const ringData = s.smooth && smoothedData[id] ? smoothedData[id] : currentData[id];
-    const { lo, hi } = normBounds[id];
-    drawRing(ringData, lo, hi, innerFrac * W, thickFrac * W, s.color, s.opacity, r.blankZero, currentData[id]);
-  });
-
-  // Outer decorative circles
-  ctx.save();
-  ctx.beginPath(); ctx.arc(CX, CY, W * .365, 0, Math.PI * 2);
-  ctx.strokeStyle = '#b0a090'; ctx.lineWidth = 1; ctx.globalAlpha = .3; ctx.stroke();
-  ctx.beginPath(); ctx.arc(CX, CY, W * .382, 0, Math.PI * 2);
-  ctx.lineWidth = .5; ctx.globalAlpha = .18; ctx.stroke();
-  ctx.restore();
-
-  if (actuals && displayState.actuals) {
-    ['temp', 'rain', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'].forEach(id => {
-      const r = RING_DEFS.find(r => r.id === id);
-      if (r && actuals[id] && layouts[id]) drawActualsLine(r, actuals[id], layouts[id], normBounds);
-    });
-    drawTodayDot(layouts, normBounds);
-  }
-
-  drawMinMaxMarkers(layouts, normBounds);
-  if (displayState.windBarbs)  drawWindBarbs(layouts);
-  if (displayState.moon)       drawMoon();
-  if (displayState.ticks)      drawTicks();
-  if (displayState.axis)       drawAxes();
-  if (displayState.holidays)   drawHolidays();
-  if (displayState.phenology)  drawPhenology();
-  drawCenter();
+  const { W, H } = canvas;
+  paintPaper(W, H);
+  paintWheel();
 }
 
 // ─── Location loading ────────────────────────────────────────────────────────
@@ -180,7 +136,7 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
         ...currentData.meta,
         temp:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
         rain:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
-        daylight: { sourceInterval: 'calculated', source: `astronomical (lat ${lat.toFixed(1)}°)` },
+        daylight: { sourceInterval: 'calculated', source: `astronomical, lat ${lat.toFixed(1)}°` },
         wind:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
         snow:     { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
         cloud:    { sourceInterval: 'daily',      source: 'ERA5 1991–2020' },
@@ -507,101 +463,49 @@ function applyUrlParams() {
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
-function patchC2S(ctx) {
-  // canvas2svg v1.0.x omits several Canvas 2D methods; patch them onto the instance.
-  let _dash = [];
-  const _origStroke = ctx.stroke.bind(ctx);
-
-  ctx.setLineDash = arr => { _dash = arr ? [...arr] : []; };
-  ctx.getLineDash = () => [..._dash];
-
-  // Apply stroke-dasharray whenever stroke() is called so each path element
-  // inherits the correct dash pattern at the moment it is stroked.
-  ctx.stroke = function (...args) {
-    _origStroke(...args);
-    if (ctx.__currentElement) {
-      const val = _dash.length ? _dash.join(',') : 'none';
-      ctx.__currentElement.setAttribute('stroke-dasharray', val);
-    }
-  };
-
-  // canvas2svg's __parseFont regex only allows [-,"a-z\s] in the family name,
-  // so single-quoted names like 'Crimson Pro' crash it. Strip the quotes.
-  let _font = ctx.font ?? '10px sans-serif';
-  Object.defineProperty(ctx, 'font', {
-    get() { return _font; },
-    set(v) { _font = typeof v === 'string' ? v.replace(/'/g, '') : v; },
-    configurable: true,
-  });
-}
-
-// Fetch Google Fonts CSS then inline each font file as a base64 data URI so
-// the exported SVG is fully self-contained and renders correctly without a
-// network connection or browser-specific CSS @import support.
-async function buildEmbeddedFontStyle() {
-  const GOOGLE_URL = 'https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap';
-  const FALLBACK   = `<style><![CDATA[@import url('${GOOGLE_URL}');]]></style>`;
-  try {
-    const css = await fetch(GOOGLE_URL).then(r => r.text());
-    const urls = [...css.matchAll(/url\(([^)]+)\)/g)]
-      .map(m => m[1].replace(/['"]/g, ''))
-      .filter(u => u.startsWith('http'));
-
-    // Fetch all font files in parallel, convert to base64 data URIs.
-    const replacements = await Promise.all(urls.map(async url => {
-      const buf   = await fetch(url).then(r => r.arrayBuffer());
-      const bytes = new Uint8Array(buf);
-      let binary  = '';
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      }
-      const b64  = btoa(binary);
-      const mime = url.includes('.woff2') ? 'font/woff2' : 'font/woff';
-      return { url, dataUri: `data:${mime};base64,${b64}` };
-    }));
-
-    let inlined = css;
-    for (const { url, dataUri } of replacements) {
-      inlined = inlined.replaceAll(url, dataUri);
-    }
-    return `<style>${inlined}</style>`;
-  } catch {
-    return FALLBACK;
-  }
-}
-
 async function exportSVG() {
   setLoading(true);
   setStatus('loading', 'Embedding fonts…');
   try {
     const fontStyle = await buildEmbeddedFontStyle();
-
     const { W, H } = canvas;
-    const svgCtx   = new C2S(W, H);
-    patchC2S(svgCtx);
-    const realCtx      = canvas.ctx;
-    canvas.ctx         = svgCtx;
-    canvas.svgExport   = true;
-    draw();
-    canvas.svgExport   = false;
-    canvas.ctx         = realCtx;
-
-    let svg = svgCtx.getSerializedSvg(true);
-    svg = svg.includes('<defs>')
-      ? svg.replace('<defs>', `<defs>${fontStyle}`)
-      : svg.replace(/(<svg[^>]*>)/, `$1<defs>${fontStyle}</defs>`);
-
-    const blob = new Blob([svg], { type: 'image/svg+xml' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.download = `wheel-${currentData.name.replace(/[^a-z0-9]/gi, '_')}.svg`;
-    a.href = url;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const svg = renderSVG(W, H, () => { paintPaper(W, H); paintWheel(); }, fontStyle);
+    downloadFile(svg, `${fileStem(currentData.name)}.svg`, 'image/svg+xml');
     setStatus('ok', '');
+  } catch (e) {
+    setStatus('error', `SVG export failed: ${e.message}`);
   } finally {
-    canvas.svgExport = false;
+    setLoading(false);
+  }
+}
+
+/** The chosen poster stock, from the size selector next to the print button. */
+function posterSize() {
+  return document.getElementById('posterSize')?.value || DEFAULT_SIZE;
+}
+
+async function exportPoster() {
+  setLoading(true);
+  setStatus('loading', `Composing the ${POSTER_SIZES[posterSize()].label} sheet…`);
+  try {
+    await printPoster(posterSize());
+    setStatus('ok', 'Poster opened in a new tab — choose “Save as PDF” in the print dialog.');
+  } catch (e) {
+    setStatus('error', e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function exportPosterSVG() {
+  setLoading(true);
+  setStatus('loading', 'Composing the poster…');
+  try {
+    await downloadPosterSVG(posterSize());
+    setStatus('ok', 'Poster SVG downloaded — vector at full size, fonts embedded.');
+  } catch (e) {
+    setStatus('error', `Poster export failed: ${e.message}`);
+  } finally {
     setLoading(false);
   }
 }
@@ -609,7 +513,6 @@ async function exportSVG() {
 // ─── Init ────────────────────────────────────────────────────────────────────
 function resizeCanvas() {
   const sz = Math.min(660, window.innerWidth * .92);
-  const titleH = Math.round(sz * 0.083);
 
   // Render the backing store at a higher resolution than the CSS display size so
   // the wheel stays crisp on retina screens and when pinch-zoomed in mobile
@@ -621,19 +524,18 @@ function resizeCanvas() {
   // Oversample to ~3× the device resolution (crisp to roughly 3× pinch), but cap
   // the longest backing edge to stay under iOS Safari's ~16M-pixel canvas limit.
   const dpr     = window.devicePixelRatio || 1;
-  const longest = sz + titleH;
-  const scale   = Math.max(dpr, Math.min(dpr * 3, 4096 / longest));
+  const scale   = Math.max(dpr, Math.min(dpr * 3, 4096 / sz));
   canvas.el.width        = Math.round(sz * scale);
-  canvas.el.height       = Math.round((sz + titleH) * scale);
+  canvas.el.height       = Math.round(sz * scale);
   canvas.el.style.width  = sz + 'px';
-  canvas.el.style.height = (sz + titleH) + 'px';
+  canvas.el.style.height = sz + 'px';
   canvas.ctx.setTransform(scale, 0, 0, scale, 0, 0);
 
   canvas.scale = scale;
   canvas.W  = sz;
-  canvas.H  = sz + titleH;
+  canvas.H  = sz;
   canvas.CX = sz / 2;
-  canvas.CY = titleH + sz / 2;
+  canvas.CY = sz / 2;
 
   resetWheelZoom();
 }
@@ -781,6 +683,8 @@ function init() {
   window.fetchCity     = fetchCity;
   window.loadPreset    = loadPreset;
   window.exportSVG     = exportSVG;
+  window.exportPoster  = exportPoster;
+  window.exportPosterSVG = exportPosterSVG;
   window.copyLink      = copyLink;
   window.toggleDisplay = toggleDisplay;
   window.refreshPhenology = () => loadPhenology(currentData, { force: true });
