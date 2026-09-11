@@ -280,12 +280,6 @@ function glyphOk(char) {
   return !Array.from(a).every((v, i) => v === b[i]);
 }
 
-let _pentagramGlyphOk = null;
-function pentagramGlyphOk() {
-  if (_pentagramGlyphOk === null) _pentagramGlyphOk = glyphOk('⛤');
-  return _pentagramGlyphOk;
-}
-
 let _crescentGlyphOk = null;
 function crescentGlyphOk() {
   if (_crescentGlyphOk === null) _crescentGlyphOk = glyphOk('☪');
@@ -373,24 +367,26 @@ export function drawSymbol(ctx, trad, x, y, r) {
     }
 
   } else if (trad === 'wicca') {
-    if (useGlyphs && pentagramGlyphOk()) {
-      ctx.fillStyle = TRAD_COLORS[trad];
-      ctx.font = `${r * 2.4}px serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('⛤', x, y);
-    } else {
-      ctx.lineWidth = Math.max(0.5, r * 0.18);
-      ctx.beginPath();
-      for (let i = 0; i < 5; i++) {
-        const a  = -Math.PI / 2 + i * (4 * Math.PI / 5);
-        const px = x + r * Math.cos(a);
-        const py = y + r * Math.sin(a);
-        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-      }
-      ctx.closePath();
-      ctx.stroke();
+    // No Unicode character is a true pentacle (star ringed in a circle) — ⛤
+    // PENTAGRAM is a bare star on essentially every font, circle or not, so
+    // glyph coverage can't be trusted here the way it is for the other three
+    // traditions. Always draw both shapes by hand instead: a circle at radius
+    // r with a five-pointed star inscribed in it, points touching the circle,
+    // which is the traditional construction of the symbol.
+    ctx.lineWidth = Math.max(0.5, r * 0.18);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const a  = -Math.PI / 2 + i * (4 * Math.PI / 5);
+      const px = x + r * Math.cos(a);
+      const py = y + r * Math.sin(a);
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     }
+    ctx.closePath();
+    ctx.stroke();
 
   } else if (trad === 'islamic') {
     if (useGlyphs && crescentGlyphOk()) {
