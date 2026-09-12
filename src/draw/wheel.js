@@ -1,8 +1,9 @@
 import { RING_DEFS } from '../data/ringDefs.js';
-import { canvas, ringOrder, ringState, displayState, currentData, smoothedData, actuals } from '../state.js';
+import { canvas, ringOrder, ringState, displayState, currentData, smoothedData, actuals, seasons } from '../state.js';
 import { computeRingLayouts } from './layout.js';
 import { computeNormBounds } from './normalize.js';
 import { drawRing } from './ring.js';
+import { drawSeasonBand } from './seasons.js';
 import { drawMoon, drawTicks, drawAxes, drawCenter } from './decorations.js';
 import { drawHolidays } from './holidays.js';
 import { drawPhenology } from './phenology.js';
@@ -11,7 +12,7 @@ import { drawWindBarbs } from './windBarbs.js';
 import { drawActualsLine, drawTodayDot } from './actuals.js';
 import { INK } from './theme.js';
 
-const ACTUALS_RINGS = ['temp', 'rain', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'];
+const ACTUALS_RINGS = ['temp', 'rain', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud', 'dewpoint'];
 
 /**
  * Paint the whole wheel into whatever `canvas` currently points at.
@@ -31,6 +32,11 @@ export function paintWheel(opts = {}) {
     if (!s.visible || !layouts[id]) return;
     const r = RING_DEFS.find(r => r.id === id);
     const { innerFrac, thickFrac } = layouts[id];
+    // A categorical ring has no per-day value to normalize, so it paints itself.
+    if (r.categorical) {
+      drawSeasonBand(seasons.seasons, innerFrac * canvas.W, thickFrac * canvas.W, s.opacity);
+      return;
+    }
     const ringData = s.smooth && smoothedData[id] ? smoothedData[id] : currentData[id];
     const { lo, hi } = normBounds[id];
     drawRing(ringData, lo, hi, innerFrac * canvas.W, thickFrac * canvas.W, s.color, s.opacity, r.blankZero, currentData[id]);

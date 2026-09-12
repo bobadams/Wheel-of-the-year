@@ -1,9 +1,10 @@
 import { RING_DEFS } from './data/ringDefs.js';
 import { PRESETS } from './data/presets.js';
 import { gaussianSmooth } from './utils/smooth.js';
+import { computeSeasons } from './data/seasons.js';
 
 // Ring display order (innermost → outermost)
-export const ringOrder = ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'];
+export const ringOrder = ['temp', 'rain', 'daylight', 'evi', 'wind', 'dewpoint', 'pm25', 'visibility', 'snow', 'cloud', 'seasons'];
 
 // The untouched state of one ring. Exported because src/data/prefs.js diffs
 // against it: only the fields a user actually changed are persisted, so a later
@@ -23,7 +24,7 @@ export const displayState = { ...DISPLAY_DEFAULTS };
 
 function precomputeSmoothed(data) {
   const out = {};
-  ['temp', 'rain', 'daylight', 'evi', 'wind', 'pm25', 'visibility', 'snow', 'cloud'].forEach(id => {
+  ['temp', 'rain', 'daylight', 'evi', 'wind', 'dewpoint', 'pm25', 'visibility', 'snow', 'cloud'].forEach(id => {
     if (Array.isArray(data[id])) out[id] = gaussianSmooth(data[id]);
   });
   return out;
@@ -34,13 +35,22 @@ export let currentData = PRESETS[0].data;
 export let activePreset = 'Oakland';
 export let smoothedData = precomputeSmoothed(PRESETS[0].data);
 
+// This location's climatological seasons, derived from the normals above (see
+// src/data/seasons.js). Recomputed alongside smoothedData on every data change
+// rather than cached: it costs a few milliseconds, and deriving it in one place
+// makes it impossible for the band to disagree with the rings it came from —
+// each stage of a load simply sharpens it as more series arrive.
+export let seasons = computeSeasons(PRESETS[0].data);
+
 export function setCurrentData(data) {
   currentData = data;
   smoothedData = precomputeSmoothed(data);
+  seasons = computeSeasons(data);
 }
 export function mergeCurrentData(patch) {
   currentData = { ...currentData, ...patch };
   smoothedData = precomputeSmoothed(currentData);
+  seasons = computeSeasons(currentData);
 }
 export function setActivePreset(name) { activePreset = name; }
 

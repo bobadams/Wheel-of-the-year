@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { fetchModisEVI } from '../src/fetch/evi.js';
 import { fetchPm25 } from '../src/fetch/pm25.js';
 import { fetchVisibility } from '../src/fetch/visibility.js';
+import { fetchDewpoint } from '../src/fetch/humidity.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -189,8 +190,27 @@ async function main() {
     process.stdout.write(`failed (${e.message}) — preset will have no visibility data.\n`);
   }
 
+  // Dew point normals (Open-Meteo archive hourly, 2010–2020)
+  process.stdout.write('Fetching dew point normals (ERA5 hourly 2010–2020)… ');
+  let dewpoint = null;
+  try {
+    dewpoint = await fetchDewpoint(LAT, LON);
+    process.stdout.write('done.\n');
+  } catch (e) {
+    process.stdout.write(`failed (${e.message}) — preset will have no humidity data.\n`);
+  }
+
+  // An upstream with no data for this point answers with a series of nulls
+  // rather than an error, which is truthy and would go on to claim a source it
+  // does not have. The live loader already tests this; the generator must too,
+  // or the preset ships an empty ring advertising real provenance.
+  const usable = a => Array.isArray(a) && a.length === 365 && a.filter(Number.isFinite).length > 300;
+  if (!usable(pm25))       { pm25 = null;       process.stdout.write('PM2.5 came back empty — dropped.\n'); }
+  if (!usable(visibility)) { visibility = null; process.stdout.write('Visibility came back empty — dropped.\n'); }
+  if (!usable(dewpoint))   { dewpoint = null;   process.stdout.write('Dew point came back empty — dropped.\n'); }
+
   // Spot checks
-  const s = i => `temp=${temp[i]}°F  rain=${rain[i]}"  wind=${wind[i]}mph  daylight=${daylight[i]}h  evi=${evi[i]}  pm25=${pm25?.[i] ?? 'n/a'}  vis=${visibility?.[i] ?? 'n/a'}mi`;
+  const s = i => `temp=${temp[i]}°F  rain=${rain[i]}"  wind=${wind[i]}mph  daylight=${daylight[i]}h  evi=${evi[i]}  pm25=${pm25?.[i] ?? 'n/a'}  vis=${visibility?.[i] ?? 'n/a'}mi  dew=${dewpoint?.[i] ?? 'n/a'}°F`;
   console.log(`\nSpot checks:\n  Jan 1:  ${s(0)}\n  Apr 1:  ${s(90)}\n  Jul 1:  ${s(181)}\n  Oct 1:  ${s(273)}`);
 
   const preset = {
@@ -208,6 +228,7 @@ async function main() {
       windDir,
       pm25,
       visibility,
+      dewpoint,
       eviPeakKey, eviTroughKey,
       eviSampLat: sampLat, eviSampLon: sampLon,
       eviSource: 'MODIS EVI 2013–2022',
@@ -221,6 +242,7 @@ async function main() {
         wind:     { sourceInterval: 'daily',      source: 'ERA5 archive 1991–2020', years: '1991–2020' },
         pm25:       { sourceInterval: 'hourly',     source: pm25 ? 'CAMS 2014–2023' : 'unavailable', years: '2014–2023' },
         visibility: { sourceInterval: 'hourly',     source: visibility ? 'ERA5 2010–2020' : 'unavailable', years: '2010–2020' },
+        dewpoint:   { sourceInterval: 'hourly',     source: dewpoint ? 'ERA5 2010–2020' : 'unavailable', years: '2010–2020' },
       },
     },
   };

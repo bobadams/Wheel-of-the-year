@@ -44,7 +44,7 @@ const RETAIN_DAYS = 420;
 // 365-point normals arrays (index = day-of-year, 0-based, Feb 29 excluded).
 const NORMAL_SERIES = [
   'temp', 'rain', 'daylight', 'wind', 'windDir', 'snow', 'cloud',
-  'evi', 'pm25', 'visibility',
+  'evi', 'pm25', 'visibility', 'dewpoint',
 ];
 
 // Scalars carried alongside the normals (EVI sample point, provenance strings).
@@ -54,7 +54,7 @@ const NORMAL_SCALARS = [
 ];
 
 // Daily observation series, stored as { 'YYYY-MM-DD': number }.
-const ACTUAL_SERIES = ['temp', 'rain', 'wind', 'snow', 'cloud', 'evi', 'pm25', 'visibility'];
+const ACTUAL_SERIES = ['temp', 'rain', 'wind', 'snow', 'cloud', 'evi', 'pm25', 'visibility', 'dewpoint'];
 
 // Raw historical samples behind a normals series, date-keyed and never pruned.
 const BASELINE_SERIES = ['evi'];

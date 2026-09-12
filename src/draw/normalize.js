@@ -10,6 +10,7 @@ function percentile(sorted, p) {
 export function computeNormBounds(data) {
   const bounds = {};
   RING_DEFS.forEach(r => {
+    if (r.categorical) return;   // no per-day value, so nothing to scale
     const arr = data[r.id];
     const mode = ringState[r.id]?.normMode ?? r.defaultNormMode;
     if (!Array.isArray(arr)) {

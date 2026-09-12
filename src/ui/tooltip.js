@@ -1,10 +1,11 @@
 import { RING_DEFS } from '../data/ringDefs.js';
-import { canvas, ringOrder, ringState, displayState, currentData, actuals } from '../state.js';
+import { canvas, ringOrder, ringState, displayState, currentData, actuals, seasons } from '../state.js';
+import { seasonAt, seasonRangeLabel } from '../data/seasons.js';
 import { doy2angle, norm, SOLSTICE_OFFSET } from '../draw/canvas.js';
 import { DIM, MON_S } from '../draw/decorations.js';
 import { R } from '../draw/theme.js';
 
-const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', evi: '🌿', wind: '💨' };
+const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', evi: '🌿', wind: '💨', dewpoint: '💧', seasons: '🍂' };
 const ACTUALS_RINGS = new Set(['temp', 'rain', 'evi']);
 
 export function setupTooltip() {
@@ -33,7 +34,20 @@ export function setupTooltip() {
 
     const rows = ringOrder.filter(id => ringState[id].visible).map(id => {
       const r = RING_DEFS.find(r => r.id === id);
-      const v = currentData[id][doy];
+      // The seasons band reports which season this day falls in, not a value.
+      if (r.categorical) {
+        const sn = seasonAt(seasons.seasons, doy);
+        return sn
+          ? `<span style="color:${sn.color}">${ICONS.seasons}</span> ${sn.name}`
+            + `<span style="opacity:.45;font-size:.75em;margin-left:.3em">${seasonRangeLabel(sn)}</span>`
+          : null;
+      }
+      // A ring can be switched on before (or without) its series ever arriving —
+      // an optional normal that failed, or a preset that never carried it.
+      const v = currentData[id]?.[doy];
+      if (!Number.isFinite(v)) {
+        return `<span style="color:${ringState[id].color}">${ICONS[id] ?? '·'}</span> <span style="opacity:.5">no data</span>`;
+      }
       const disp = id === 'evi' ? v.toFixed(3) : id === 'rain' ? v.toFixed(2) : Math.round(v * 10) / 10;
       let actual = '';
       if (actuals && displayState.actuals && ACTUALS_RINGS.has(id)) {
@@ -50,8 +64,8 @@ export function setupTooltip() {
       const srcTag = currentData.meta?.[id]
         ? `<span style="opacity:.45;font-size:.75em;margin-left:.3em">${currentData.meta[id].sourceInterval}</span>`
         : '';
-      return `<span style="color:${ringState[id].color}">${ICONS[id]}</span> ${disp} ${r.unit}${srcTag}${actual}`;
-    }).join('<br>');
+      return `<span style="color:${ringState[id].color}">${ICONS[id] ?? '·'}</span> ${disp} ${r.unit}${srcTag}${actual}`;
+    }).filter(Boolean).join('<br>');
 
     tip.innerHTML = `<strong>${MON_S[m]} ${doy - acc + 1}</strong><br>${rows}`;
   });

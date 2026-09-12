@@ -15,13 +15,14 @@
  */
 
 import { RING_DEFS, RING_LABELS } from '../data/ringDefs.js';
-import { canvas, ringOrder, ringState, displayState, currentData, actuals } from '../state.js';
+import { canvas, ringOrder, ringState, displayState, currentData, actuals, seasons } from '../state.js';
 import { computeNormBounds } from '../draw/normalize.js';
 import { paintWheel, paintPaper } from '../draw/wheel.js';
 import { INK, hairline, drawTracked } from '../draw/theme.js';
 import { TRAD_COLORS, TRAD_LABELS, drawSymbol } from '../draw/holidays.js';
 import { CATEGORY_COLORS, CATEGORY_LABELS } from '../draw/phenology.js';
 import { coordLabel } from '../data/summary.js';
+import { seasonRangeLabel } from '../data/seasons.js';
 import { buildEmbeddedFontStyle, renderSVG, downloadFile, fileStem } from '../export/svg.js';
 
 const IN = 72;                       // PDF points per inch
@@ -105,7 +106,9 @@ function keyBlocks(S) {
   const visible = ringOrder.filter(id => ringState[id].visible);
   const meta = currentData.meta ?? {};
 
-  const ringItems = visible.map(id => {
+  // The seasons band is not a scaled ring, so it gets its own block below
+  // rather than a range that would read "undefined – undefined".
+  const ringItems = visible.filter(id => !RING_DEFS.find(r => r.id === id)?.categorical).map(id => {
     const def = RING_DEFS.find(r => r.id === id);
     const color = ringState[id].color;
     // The ring definition carries the short form of the provenance; the live
@@ -215,6 +218,37 @@ function keyBlocks(S) {
     { heading: 'The rings', items: ringItems },
     { heading: 'Marks', items: markItems },
   ];
+
+  // The seasons this location actually has, printed with the dates they turn on
+  // and a note saying what they were derived from — a reader looking at an
+  // unfamiliar set of seasons needs to know they came from the data on the
+  // sheet rather than from a calendar.
+  const seasonsVisible = visible.includes('seasons');
+  if (seasonsVisible && seasons.seasons.length) {
+    blocks.push({
+      heading: 'The seasons',
+      items: seasons.seasons.map(sn => ({
+        title: sn.name,
+        detail: `${seasonRangeLabel(sn)} · ${sn.days} days`,
+        swatch: (ctx, x, y, w, h) => {
+          ctx.save();
+          ctx.fillStyle = sn.color; ctx.globalAlpha = 0.42;
+          ctx.fillRect(x, y, w, h);
+          ctx.globalAlpha = 0.8; ctx.strokeStyle = sn.color;
+          ctx.lineWidth = hairline(S.W, 0.0013, 0.7);
+          ctx.strokeRect(x, y + 0.5, w, h - 1);
+          ctx.restore();
+        },
+      })),
+      note: `Derived from this location’s own normals (${seasons.basis.join(', ')}) — `
+        + 'the boundaries are where the year actually turns here, not calendar dates.',
+    });
+  } else if (seasonsVisible && seasons.note) {
+    blocks.push({
+      heading: 'The seasons',
+      items: [{ title: 'None found', detail: seasons.note }],
+    });
+  }
 
   if (displayState.holidays) {
     const trads = Object.keys(TRAD_COLORS).filter(t => displayState[{

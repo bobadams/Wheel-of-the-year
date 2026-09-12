@@ -13,9 +13,10 @@ import { geocode, fetchClimateAPI, aggregateClimate } from './fetch/climate.js';
 import { fetchModisEVI, eviProxyFallback } from './fetch/evi.js';
 import { fetchPm25 } from './fetch/pm25.js';
 import { fetchVisibility } from './fetch/visibility.js';
+import { fetchDewpoint } from './fetch/humidity.js';
 import {
   fetchActuals, fetchRecentEVI, fetchActualsPm25, fetchActualsVisibility,
-  calendarDOY, todayDate,
+  fetchActualsDewpoint, calendarDOY, todayDate,
 } from './fetch/actuals.js';
 import { fetchPhenology } from './fetch/phenology.js';
 import { setStatus, setLoading, setEviProgress } from './ui/status.js';
@@ -108,14 +109,16 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
   const needEvi        = !skipNormals && !hasSeries(currentData.evi);
   const needPm25       = !skipNormals && !hasSeries(currentData.pm25);
   const needVisibility = !skipNormals && !hasSeries(currentData.visibility);
+  const needDewpoint   = !skipNormals && !hasSeries(currentData.dewpoint);
 
-  if (needEvi || needPm25 || needVisibility) {
+  if (needEvi || needPm25 || needVisibility || needDewpoint) {
     mergeCurrentData({
       meta: {
         ...currentData.meta,
         ...(needEvi        ? { evi:        { sourceInterval: 'pending', source: 'fetching…' } } : {}),
         ...(needPm25       ? { pm25:       { sourceInterval: 'hourly',  source: 'fetching…' } } : {}),
         ...(needVisibility ? { visibility: { sourceInterval: 'hourly',  source: 'fetching…' } } : {}),
+        ...(needDewpoint   ? { dewpoint:   { sourceInterval: 'hourly',  source: 'fetching…' } } : {}),
       },
     });
     refreshSourceBadges();
@@ -263,6 +266,25 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
     if (visibility) record({ normals: normalsFromData(currentData, ['visibility']) });
   }
 
+  // ── Dew point normals (ERA5 2010–2020) ────────────────────────────────────
+  // The mugginess axis, and one of the axes the seasons band can be derived
+  // from — a place whose year turns on humidity rather than temperature has
+  // nothing to say for itself without this.
+  if (needDewpoint) {
+    setStatus('loading', `${name} — fetching humidity normals…`);
+    let dewpoint = null;
+    try { dewpoint = await fetchDewpoint(lat, lon); } catch { /* optional */ }
+    if (!hasSeries(dewpoint)) dewpoint = null;
+    if (stale()) return;
+    mergeCurrentData({
+      dewpoint,
+      meta: { ...currentData.meta, dewpoint: { sourceInterval: 'hourly', source: dewpoint ? 'ERA5 2010–2020' : 'unavailable' } },
+    });
+    refreshSourceBadges();
+    draw();
+    if (dewpoint) record({ normals: normalsFromData(currentData, ['dewpoint']) });
+  }
+
   await weatherActuals;
   if (stale()) return;
   setStatus('ok', `${name} — loaded.`);
@@ -283,7 +305,7 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
     } catch { /* EVI actuals optional */ }
   }
 
-  for (const [id, fetchFn] of [['pm25', fetchActualsPm25], ['visibility', fetchActualsVisibility]]) {
+  for (const [id, fetchFn] of [['pm25', fetchActualsPm25], ['visibility', fetchActualsVisibility], ['dewpoint', fetchActualsDewpoint]]) {
     try {
       const recent = await fetchFn(lat, lon, newestDate(store[id]));
       if (!stale() && mergeActuals(store, id, recent)) {

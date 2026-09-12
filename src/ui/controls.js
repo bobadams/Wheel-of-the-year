@@ -1,5 +1,6 @@
 import { RING_DEFS } from '../data/ringDefs.js';
-import { ringOrder, ringState, displayState, currentData } from '../state.js';
+import { ringOrder, ringState, displayState, currentData, seasons } from '../state.js';
+import { seasonRangeLabel } from '../data/seasons.js';
 import { savePrefs } from '../data/prefs.js';
 import { rebuildLegend } from './legend.js';
 import { showEviAnalysis } from './eviAnalysis.js';
@@ -13,6 +14,33 @@ const NORM_MODES = [
   { id: 'minmax',     label: 'Min/Max',    title: "Stretched to each ring's actual min and max" },
   { id: 'percentile', label: 'Percentile', title: 'Stretched to 5th–95th percentile, clipping outliers' },
 ];
+
+/**
+ * What the seasons band is showing, and what it was derived from.
+ *
+ * A season the user did not choose needs to account for itself, so the panel
+ * lists the axes that passed the amplitude gate as well as the seasons found —
+ * including the case where nothing passed, which is a real finding about the
+ * place rather than a failed fetch.
+ */
+function seasonPanel() {
+  const pass = seasons.axes.filter(a => a.passed).map(a => a.id);
+  const fail = seasons.axes.filter(a => !a.passed).map(a => a.id);
+  const rows = seasons.seasons.length
+    ? seasons.seasons.map(sn => `
+        <div class="misc-row" style="padding-left:1.3rem;gap:.4rem;align-items:center">
+          <span class="ring-dot" style="background:${sn.color};width:.55rem;height:.55rem;flex:none"></span>
+          <span class="misc-label" style="flex:1">${sn.name}</span>
+          <span class="slider-val" style="white-space:nowrap">${seasonRangeLabel(sn)}</span>
+        </div>`).join('')
+    : `<div class="misc-row" style="padding-left:1.3rem"><span class="misc-label" style="font-style:italic">${seasons.note ?? 'No seasons derived.'}</span></div>`;
+  return `${rows}
+    <div class="misc-row" style="padding-left:1.3rem;display:block">
+      <span class="misc-label" style="font-size:.7rem;opacity:.75">
+        derived from ${pass.length ? pass.join(', ') : '—'}${fail.length ? ` · too flat here: ${fail.join(', ')}` : ''}
+      </span>
+    </div>`;
+}
 
 export function buildRingControls() {
   const c = document.getElementById('ringControls');
@@ -66,6 +94,7 @@ export function buildRingControls() {
           <input type="range" min=".1" max="1" step=".05" value="${s.opacity}" data-id="${id}" data-prop="opacity">
           <span class="slider-val" id="sv-opac-${id}">${Math.round(s.opacity * 100)}%</span>
         </div>
+        ${r.categorical ? `<div id="season-panel">${seasonPanel()}</div>` : `
         <div class="color-row"><label>Color</label><input type="color" value="${s.color}" data-id="${id}" data-action="color"></div>
         <div class="misc-row" style="padding-left:1.3rem">
           <span class="misc-label">Smoothing</span>
@@ -76,7 +105,7 @@ export function buildRingControls() {
           <div class="norm-btn-group" style="flex:1">
             ${NORM_MODES.map(m => `<button class="norm-btn${s.normMode === m.id ? ' active' : ''}" data-id="${id}" data-norm="${m.id}" title="${m.title}">${m.label}</button>`).join('')}
           </div>
-        </div>
+        </div>`}
         ${id === 'evi' ? `<div class="misc-row" style="padding-left:1.3rem"><a id="evi-map-link" href="" target="_blank" style="display:none;font-size:.75rem">View sampled pixel on map</a></div>` : ''}
         ${id === 'wind' ? `<div class="misc-row" style="padding-left:1.3rem"><span class="misc-label">Wind direction</span><button class="toggle ${displayState.windBarbs ? 'on' : ''}" data-action="toggleWindBarbs" title="Show wind direction markers at the base of the wind ring"></button></div>` : ''}
       </div>`;
@@ -106,8 +135,17 @@ export function buildRingControls() {
   refreshSourceBadges();
 }
 
-/** Update the per-ring source-interval badges from currentData.meta */
+/**
+ * Refresh everything in the panel that is derived from the data rather than
+ * from the user's choices. Called after each stage of a load, which is what
+ * keeps the seasons — recomputed every time a series lands — from going stale
+ * in the panel and the key while the wheel itself has already redrawn.
+ */
 export function refreshSourceBadges() {
+  const seasonEl = document.getElementById('season-panel');
+  if (seasonEl) seasonEl.innerHTML = seasonPanel();
+  rebuildLegend();
+
   const meta = currentData.meta;
   RING_DEFS.forEach(r => {
     const el = document.getElementById(`rs-${r.id}`);

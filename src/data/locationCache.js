@@ -37,8 +37,8 @@ const BASE = import.meta.env.VITE_IMAGE_URL ?? '/wheel-images';
 const DISPLAY_DAYS = 365;
 
 // Series stored in each half of a record.
-export const NORMAL_SERIES = ['temp', 'rain', 'daylight', 'wind', 'windDir', 'snow', 'cloud', 'evi', 'pm25', 'visibility'];
-export const ACTUAL_SERIES = ['temp', 'rain', 'wind', 'snow', 'cloud', 'evi', 'pm25', 'visibility'];
+export const NORMAL_SERIES = ['temp', 'rain', 'daylight', 'wind', 'windDir', 'snow', 'cloud', 'evi', 'pm25', 'visibility', 'dewpoint'];
+export const ACTUAL_SERIES = ['temp', 'rain', 'wind', 'snow', 'cloud', 'evi', 'pm25', 'visibility', 'dewpoint'];
 
 const NORMAL_SCALARS = ['resolution', 'eviSource', 'eviSampLat', 'eviSampLon', 'eviSampMapUrl', 'eviPeakKey', 'eviTroughKey'];
 

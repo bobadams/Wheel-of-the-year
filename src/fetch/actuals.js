@@ -1,4 +1,5 @@
 import { fetchModisBatch } from './evi.js';
+import { cToF } from './humidity.js';
 
 // Longest window we ever ask an upstream API for — a little under a full year,
 // which is all the wheel can display at once.
@@ -118,6 +119,22 @@ export async function fetchActualsVisibility(lat, lon, since) {
   if (!r.ok) throw new Error(`Visibility actuals API error ${r.status}`);
   const data = await r.json();
   return hourlyToDaily(data.hourly.time, data.hourly.visibility, v => Math.round(v / 1609.34 * 100) / 100);
+}
+
+export async function fetchActualsDewpoint(lat, lon, since) {
+  const { start, end } = requestRange(since);
+
+  const url = `https://archive-api.open-meteo.com/v1/archive?`
+    + `latitude=${lat}&longitude=${lon}`
+    + `&start_date=${start}&end_date=${end}`
+    + `&hourly=dewpoint_2m&timezone=auto`;
+
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Dew point actuals API error ${r.status}`);
+  const data = await r.json();
+  const series = data.hourly?.dewpoint_2m ?? data.hourly?.dew_point_2m;
+  if (!series) throw new Error('No dew point actuals returned');
+  return hourlyToDaily(data.hourly.time, series, cToF);
 }
 
 export async function fetchRecentEVI(lat, lon, since) {

@@ -22,6 +22,12 @@ export const RING_DEFS = [
   { id: 'visibility', label: 'Visibility',   unit: 'mi',    color: '#5f97b8', normLo: 2,   normHi: 10,  defaultNormMode: 'percentile', source: 'ERA5 2010–2020', defaultVisible: false },
   { id: 'snow',       label: 'Snow Depth',   unit: 'in',    color: '#7fa8bf', normLo: 0,   normHi: 36,  defaultNormMode: 'minmax',     source: 'ERA5 1991–2020', blankZero: true, defaultVisible: false },
   { id: 'cloud',      label: 'Cloud Cover',  unit: '%',     color: '#8c9498', normLo: 0,   normHi: 100, defaultNormMode: 'fixed',      source: 'ERA5 1991–2020', defaultVisible: false },
+  { id: 'dewpoint',   label: 'Humidity',     unit: '°F dp', color: '#5f8f7a', normLo: 20,  normHi: 75,  defaultNormMode: 'fixed',      source: 'ERA5 2010–2020', defaultVisible: false },
+  // Categorical: no value per day, so it is drawn by draw/seasons.js rather
+  // than drawRing(), and the modules that assume a numeric series (extreme
+  // markers, normalization, the tooltip's per-day readout) skip it. It still
+  // occupies a ring slot, so it reorders and resizes like any other.
+  { id: 'seasons',    label: 'Seasons',      unit: '',      color: '#8a7048', categorical: true, defaultNormMode: 'fixed', source: 'derived from this location’s normals' },
 ];
 
 export const RING_GAP   = 0.010;
@@ -38,4 +44,5 @@ export const RING_LABELS = {
   visibility: { fmt: v => `${v.toFixed(1)} mi`,      maxWord: 'clearest',      minWord: 'foggiest'  },
   snow:       { fmt: v => `${v.toFixed(1)}"`,         maxWord: 'deepest',       minWord: 'bare'      },
   cloud:      { fmt: v => `${Math.round(v)}%`,        maxWord: 'cloudiest',     minWord: 'clearest'  },
+  dewpoint:   { fmt: v => `${Math.round(v)}°F`,       maxWord: 'muggiest',      minWord: 'driest air' },
 };

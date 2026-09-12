@@ -1,6 +1,7 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { RING_LABELS } from '../data/ringDefs.js';
-import { ringState, displayState, currentData } from '../state.js';
+import { ringState, displayState, currentData, seasons } from '../state.js';
+import { seasonRangeLabel } from '../data/seasons.js';
 import { computeNormBounds } from '../draw/normalize.js';
 import { INK } from '../draw/theme.js';
 
@@ -16,6 +17,27 @@ export function rebuildLegend() {
 
   RING_DEFS.forEach(r => {
     if (!ringState[r.id].visible) return;
+    // The seasons band has no scale to report; what a reader needs from it is
+    // which seasons were found and when they run, so it expands to one row each.
+    if (r.categorical) {
+      if (!seasons.seasons.length) {
+        const d = document.createElement('div');
+        d.className = 'legend-item';
+        d.innerHTML = `<div class="legend-swatch" style="background:${r.color};opacity:.35"></div>`
+          + `${r.label} <span class="legend-range">${seasons.note ?? 'none found'}</span>`;
+        el.appendChild(d);
+        return;
+      }
+      seasons.seasons.forEach(sn => {
+        const d = document.createElement('div');
+        d.className = 'legend-item';
+        d.title = `Derived from ${seasons.basis.join(', ')} — ${sn.days} days`;
+        d.innerHTML = `<div class="legend-swatch" style="background:${sn.color}"></div>`
+          + `${sn.name} <span class="legend-range">${seasonRangeLabel(sn)}</span>`;
+        el.appendChild(d);
+      });
+      return;
+    }
     const color = ringState[r.id].color;
     const b = bounds[r.id] ?? { lo: r.normLo, hi: r.normHi };
     const fmt = RING_LABELS[r.id]?.fmt ?? (v => `${v}`);

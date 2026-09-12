@@ -36,7 +36,8 @@ No backend, no database, no runtime dependencies.
     ├── state.js                  # Centralized mutable state
     ├── styles.css                # All styling (CSS custom properties, responsive)
     ├── data/
-    │   ├── ringDefs.js           # 9 ring definitions (colors, units, scale ranges, provenance)
+    │   ├── ringDefs.js           # 11 ring definitions (colors, units, scale ranges, provenance)
+    │   ├── seasons.js            # Climatological seasons derived from this location's own normals
     │   ├── presets.js            # Built-in Oakland, CA preset (365-point arrays)
     │   ├── summary.js            # The year in a few figures — feeds the cartouche and the key
     │   ├── locationCache.js      # Client half of the server-side location cache
@@ -46,6 +47,7 @@ No backend, no database, no runtime dependencies.
     │   ├── canvas.js             # Math helpers: doy2angle, polar, norm, arc text
     │   ├── wheel.js              # paintWheel() — the whole drawing, screen and poster alike
     │   ├── ring.js               # Draw concentric ring arcs (one arc per day)
+    │   ├── seasons.js            # The seasons band — contiguous named arcs, not a scaled ring
     │   ├── layout.js             # Compute inner radius + thickness per visible ring
     │   ├── decorations.js        # Calendar band, moon lane, solar cross, centre cartouche
     │   ├── labels.js             # Extreme markers: value, date, collision resolution
@@ -58,6 +60,7 @@ No backend, no database, no runtime dependencies.
     │   ├── climate.js            # Geocode city → fetch ERA5 30-yr normals → 365-day arrays
     │   ├── ndvi.js               # Fetch MODIS 16-day NDVI composites → smooth → 365-day array
     │   ├── actuals.js            # Fetch recent real observations (trailing ~350 days, or just the days past what the cache holds)
+    │   ├── humidity.js           # Fetch ERA5 hourly dew point → 365-day normals (the mugginess axis)
     │   └── image.js              # Generate AI landscape image via Forge API
     └── ui/
         ├── controls.js           # Ring control panel: toggle, color, thickness, opacity, drag-reorder
@@ -244,6 +247,62 @@ export either.
 an extreme label, a season label or a holiday name stays legible where it crosses
 a ring fill without a box around it. Anything drawn over the rings should use it.
 
+## Seasons are derived, never assumed
+
+`src/data/seasons.js` works out what seasons this location actually has, and the
+`seasons` ring draws them. Nothing starts from a season vocabulary and looks for
+its dates: a place may have a wet and a dry season, a fog season, four thermal
+ones, or none, and the module finds the structure first and names it after.
+
+Three stages, and **the order is the design**:
+
+1. **Gate, in absolute units.** Which axes carry a real annual cycle — a ≥9 °F
+   temperature spread, a Walsh & Lawler rainfall seasonality index ≥0.40, ≥0.08
+   of EVI amplitude, and so on. This *must* run before normalization. z-scoring
+   divides the amplitude out, so a rainforest varying ±1 °F produces a z-scored
+   year **identical** to Chicago's, and every clustering method then returns four
+   confident seasons made of noise. The gate is the only thing that lets a place
+   legitimately come back with **no seasons**, which is a finding about the
+   place, not a failed fetch — the legend, the panel and the poster key each say
+   so in words.
+2. **Segment**, by exact dynamic programming over the circular year on the
+   surviving axes. Boundaries *and* the number of seasons both fall out of the
+   data. Unlike k-means it cannot hit a local minimum or answer differently twice.
+3. **Name**, from each arc's own signature.
+
+Four things in there are load-bearing and easy to undo:
+
+- **Rate of change is a feature, at reduced weight.** Spring and autumn sit at
+  the same temperature; level alone cannot separate them, which is why a
+  level-only clustering gives a four-season continental climate only two
+  seasons. At full weight the rate term instead splits single long seasons along
+  their own flanks, so it is damped (`RATE_WEIGHT`).
+- **Adjacent seasons with the same name are merged.** This is the counterweight
+  to the rate features: they legitimately split spring from autumn, but they also
+  split one long wet season at the point where it stops deepening. Only
+  *adjacent* pairs merge, so a bimodal equatorial year keeps both of its separate
+  wet seasons even though they share a name.
+- **Temperature words come from the absolute mean, not the z-score.** A z-score
+  is relative to the location's own year, so Darwin's coolest season — 86 °F —
+  came out "cold", which is true of the statistic and false of the place. The
+  z-score still decides *whether* an axis is mentioned; only the word is absolute.
+  Rain is the deliberate exception: a desert's wet season really is its wet
+  season, and that is how people speak.
+- **`daylight` is not a season axis.** It is astronomical, identical for every
+  place at a given latitude, and including it would impose the same cycle
+  everywhere — precisely the arbitrary calendar this module exists to avoid.
+
+Winter/Spring/Summer/Autumn are used **only** when the data shows that year: four
+seasons, a temperature swing ≥25 °F, and temperature among the axes separating
+them most. The dates are still derived. A place that does not have the quartet is
+never forced into it.
+
+Seasons are recomputed in `state.js` alongside `smoothedData` on every data
+change (~7 ms), so each stage of a load sharpens them and the band can never
+disagree with the rings it came from. There is nothing to cache and no separate
+refresh path — but note that `refreshSourceBadges()` is what re-renders the
+seasons panel and the legend, so a new load stage must keep calling it.
+
 ## Printing a poster
 
 `printPoster(sizeKey)` composes a **portrait, self-contained SVG** of the whole
@@ -316,7 +375,17 @@ Each ring has: `id`, `label`, `unit`, `color`, `normLo`/`normHi` fallback range,
 Colors are deliberately desaturated earth pigments: a saturated screen green has
 nowhere to go in print, and nine rings have to stay tellable apart on paper.
 
-The 9 rings: `temp`, `rain`, `daylight`, `evi`, `wind`, `pm25`, `visibility`, `snow`, `cloud` — the last four hidden by default.
+The 11 rings: `temp`, `rain`, `daylight`, `evi`, `wind`, `pm25`, `visibility`,
+`snow`, `cloud`, `dewpoint`, `seasons` — everything after `wind` is hidden by
+default except `seasons`.
+
+`seasons` is the one **categorical** ring: it carries `categorical: true` and no
+`normLo`/`normHi`, because it has no value per day. That flag is what every
+module keyed on a numeric series checks before touching it — `drawRing` is
+replaced by `drawSeasonBand`, and `computeNormBounds`, `drawMinMaxMarkers`, the
+legend's range, the poster's `ringRange` and the tooltip's readout all branch on
+it. Adding another categorical ring means finding those branches, not inventing
+a new mechanism.
 
 ### Data fetching patterns
 - All fetches use `async/await` with `try/catch`
@@ -346,8 +415,24 @@ The 9 rings: `temp`, `rain`, `daylight`, `evi`, `wind`, `pm25`, `visibility`, `s
 | Open-Meteo Climate | ERA5 30-year normals (1991–2020) | Daily aggregates, free |
 | Open-Meteo Archive | Recent actual observations | Past ~185 days, free |
 | MODIS ORNL DAAC | MOD13Q1 NDVI 16-day composites | 2019–2022 baseline, 4km × 4km sample |
+| Open-Meteo Archive (hourly) | Dew point normals, 2010–2020 | Its **own request**, never folded into the main daily call — see below |
 
 MODIS requests are batched per 16-day interval; `setNdviProgress()` updates a progress bar during fetch.
+
+### An optional normal gets its own request
+
+`pm25`, `visibility` and `dewpoint` are each fetched by their own module and
+their own stage in `loadLocation()`, rather than being added to
+`fetchClimateAPI`'s `daily=` list. That is not tidiness — Open-Meteo rejects the
+**entire** request with a 400 when one aggregation name is wrong or retired, so a
+variable added to the main call can take temperature, rainfall, wind, snow and
+cloud down with it. As its own stage, a bad variable name costs exactly one ring.
+
+The same reason applies to the preset generator, which now drops a series that
+comes back as 365 nulls: an upstream with no data for a point answers with nulls
+rather than an error, and a truthy-but-empty array used to be stored with meta
+claiming real provenance. That is how the committed Oakland preset ended up
+shipping a `visibility` ring of nulls labelled `ERA5 2010–2020`.
 
 ### A subset request may span at most 10 composites
 
@@ -784,6 +869,9 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Task | Files to touch |
 |------|---------------|
 | Add a new data ring | `ringDefs.js`, `controls.js` (legend), `fetch/climate.js` or new fetch module, `state.js` |
+| Change how seasons are found, counted or named | `src/data/seasons.js` (`SEASON_AXES` gates and vocabulary, `MIN_GAIN`, `RATE_WEIGHT`, `nameFromSignature`) |
+| Change how the seasons band looks | `src/draw/seasons.js` |
+| Add an optional normal (its own API) | new module in `src/fetch/`, a stage in `loadLocation()`, `NORMAL_SERIES`/`ACTUAL_SERIES` in **both** `locationCache.js` and `climate-cache.mjs` |
 | Change color scheme | `styles.css` (custom properties) and `ringDefs.js` (default colors) |
 | Add a new decoration | `draw/decorations.js`, then call it from `paintWheel()` in `draw/wheel.js` |
 | Move a ring or annotation band | `R` in `draw/theme.js` — check its neighbours in the same table |
