@@ -85,16 +85,28 @@ npm run generate-presets  # Regenerate Oakland preset from live APIs (Node.js)
 ## Server & Deployment
 
 ### Infrastructure
-- **Server:** Mac mini, accessed via `ssh macmini`
+- **Server:** Mac mini (`Bradfords-Mac-mini.local`). **Claude sessions normally
+  run on the Mac mini itself** — check `hostname` first. If it says
+  `Bradfords-Mac-mini`, run commands directly; `ssh macmini` is only an alias on
+  other machines and fails to resolve here.
 - **Domain:** `slamado.ng` (Cloudflare-managed)
-- **Web server:** nginx on port 8080 (`/opt/homebrew/etc/nginx/servers/daily-astrology.conf`)
+- **Web server:** nginx on port 8080. There is **one** server block,
+  `/opt/homebrew/etc/nginx/servers/slamadong.conf`, that includes per-site
+  fragments from `/opt/homebrew/etc/nginx/sites/*.conf` — this app's is
+  **`sites/wheel.conf`**. `nginx.conf`, `servers/` and `sites/` are symlinks into
+  the **`~/Sites/infra`** repo (`git@github.com:bobadams/slamadong-infra.git`), so
+  commit nginx changes there, not here. Read `~/Sites/infra/nginx/sites/README.md`
+  before editing (never add a second `server { }` block), and reload with
+  `~/Sites/infra/bin/reload.sh` (it runs `nginx -t` first).
 - **Tunnel:** Named Cloudflare Tunnel `macmini` (UUID `218c4c03-1ae4-44d9-80d1-3ac64888e7de`), managed by launchd, runs `cloudflared tunnel run macmini`
 - **Project location on server:** `~/Sites/wheel-of-the-year/`
-- **Git remote:** `git@github.com:bobadams/wheel-of-the-year.git`
+- **Git remote:** `git@github.com:bobadams/Wheel-of-the-year.git`
 
 ### Live URLs
 - `https://slamado.ng/` — **landing page**: a static index of all the sites
-  below (`~/Sites/landing/index.html`). Previously redirected to `/astrology/`.
+  hosted here (`~/Sites/infra/landing/index.html`; `~/Sites/landing` is a symlink
+  to it). Previously redirected to `/astrology/`. The full list of sites is the
+  set of fragments in `~/Sites/infra/nginx/sites/`.
 - `https://slamado.ng/wheel/` — Wheel of the Year (this app)
 - `https://slamado.ng/astrology/` — Daily Astrology (sibling app)
 - `https://slamado.ng/planets.html` — Ephemeris / "The Wandering Stars" planetary
@@ -138,13 +150,34 @@ remember:
 > practice.)
 
 ```bash
-# 1. Edit files and rebuild, all on the Mac mini
-ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && cd ~/Sites/wheel-of-the-year && npm run build"
+# On the Mac mini (from another machine, wrap each line in: ssh macmini "…")
+export PATH=/opt/homebrew/bin:$PATH && cd ~/Sites/wheel-of-the-year
 
-# 2. Commit and push from the server as a backup
-ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && cd ~/Sites/wheel-of-the-year && git add -A && git commit -m '...' && git push"
+# 1. Rebuild the front end
+npm run build
+
+# 2. If anything under server/ changed, restart the image service
+launchctl kickstart -k gui/$(id -u)/com.wheel.image-server
+
+# 3. Commit and push as a backup
+git add -A && git commit -m '...' && git push
 ```
-nginx serves the built `dist/` directory directly — no process restart needed after a rebuild.
+nginx serves the built `dist/` directory directly, so a front-end change needs no
+restart. **The image service is different:** launchd keeps the Node process
+running, and it keeps the old `server/*.mjs` until you restart it. Forgetting
+this fails silently. For example, a new ring added to the cache lists in
+`server/climate-cache.mjs` is quietly dropped from every POST until the service
+restarts. After restarting, check that a new PID is listening with
+`lsof -nP -iTCP:7871 -sTCP:LISTEN`.
+
+**Merging a branch from a cloud session.** Cloud Claude sessions push
+`claude/*` branches to GitHub rather than editing here. To take one:
+`git fetch origin`, check that it fast-forwards
+(`git merge-base --is-ancestor main origin/<branch>`),
+`git merge --ff-only origin/<branch>`, then run the steps above. This is the one
+case where pulling into the server's tree is safe, and only if `git status` is
+clean first. A branch that fast-forwards from `main` already contains every
+committed live edit, and a clean tree means there are no uncommitted ones.
 
 > **Any other clone (e.g. a laptop checkout) is read-only / reference.** If you
 > edit elsewhere, you must `git pull` *from* the server's history first and
@@ -152,7 +185,14 @@ nginx serves the built `dist/` directory directly — no process restart needed 
 > Mac mini directly to avoid divergence.
 
 ### nginx location block (for reference)
+The static-site half of `~/Sites/infra/nginx/sites/wheel.conf` (the
+`/wheel-images/` half is under "Image service — deployment" below). The file in
+the infra repo is authoritative; this copy is here to read, not to paste.
 ```nginx
+location = /wheel {
+    return 301 /wheel/;
+}
+
 # Content-hashed bundles — safe to cache forever, the name changes when the
 # contents do. `^~` makes this win over the /wheel/ prefix below.
 location ^~ /wheel/assets/ {
@@ -165,35 +205,28 @@ location /wheel/ {
     try_files $uri $uri/ /wheel/index.html;
     add_header Cache-Control "no-cache";   # see "Never let index.html be cached"
 }
-
-# Ephemeris ("The Wandering Stars") and Synastry are single static files
-# served from ~/Sites/wandering-stars/.
-location = /planets.html   { root /Users/bradfordadams/Sites/wandering-stars; }
-location = /synastry.html  { root /Users/bradfordadams/Sites/wandering-stars; }
-
-# slamado.ng root serves the static landing index (was: 302 → /astrology/).
-location = / {
-    root /Users/bradfordadams/Sites/landing;
-    try_files /index.html =404;
-}
 ```
+The landing page, Wandering Stars and the other sites each have their own
+fragment in the same directory.
 
-> **Anthropic API key:** the `/api/anthropic/` proxy's `x-api-key` is NOT inlined
-> in `daily-astrology.conf`. It lives in a single `chmod 600` file at
-> `/opt/homebrew/etc/nginx/anthropic-key.conf` (kept **outside** the `servers/*`
-> glob so nginx doesn't load it as a standalone server), pulled in with
-> `include`. To rotate: edit that one file and `nginx -s reload`.
+> **Anthropic API key:** the shared `/api/anthropic/` proxy lives in
+> `sites/ai-proxy.conf`, and its `x-api-key` is NOT inlined there. It lives in a
+> single `chmod 600` file at `/opt/homebrew/etc/nginx/anthropic-key.conf`, pulled
+> in with `include`. That file is kept **outside** the `servers/*` and `sites/*`
+> globs, so nginx never loads it on its own, and outside the infra repo, so it is
+> never committed. To rotate it, edit that one file and run
+> `~/Sites/infra/bin/reload.sh`.
 
 ### Restarting the tunnel
 If the tunnel goes down:
 ```bash
-ssh macmini "launchctl unload ~/Library/LaunchAgents/com.cloudflared.astrology.plist && launchctl load ~/Library/LaunchAgents/com.cloudflared.astrology.plist"
+launchctl unload ~/Library/LaunchAgents/com.cloudflared.astrology.plist && launchctl load ~/Library/LaunchAgents/com.cloudflared.astrology.plist
 ```
 Use `unload`/`load` — not `stop`/`start` — to ensure the plist is re-read.
 
 Check tunnel status:
 ```bash
-ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && cloudflared tunnel info macmini"
+/opt/homebrew/bin/cloudflared tunnel info macmini
 ```
 
 ## Drawing the wheel
@@ -497,7 +530,7 @@ Landscape images are generated locally using **Stable Diffusion Forge** on the M
 
 ### Running Forge
 ```bash
-ssh macmini "export PATH=/opt/homebrew/bin:\$PATH && nohup bash -c 'cd ~/stable-diffusion-webui-forge && bash webui.sh' > ~/forge-run.log 2>&1 &"
+export PATH=/opt/homebrew/bin:$PATH && nohup bash -c 'cd ~/stable-diffusion-webui-forge && bash webui.sh' > ~/forge-run.log 2>&1 &
 ```
 
 Forge listens on `localhost:7860` (Mac mini only — not exposed directly to the internet).
@@ -536,8 +569,10 @@ is intentionally **no public nginx proxy** to either one.
 - The service renders **img2img** at 1024×512 over a data-driven init (see
   "Center Ecology Image — tiny planet" below); the client warps it into a planet
 
-In local dev, set `VITE_IMAGE_URL=http://macmini.local:7871` in `.env.local` to hit
+In local dev, set `VITE_IMAGE_URL=http://127.0.0.1:7871` in `.env.local` to hit
 the image service directly (Forge itself is no longer called from the browser).
+See the local-dev note under "Image service — deployment" for running dev from
+another machine.
 
 ### Common issues
 - **Black images:** Always run with `--no-half --no-half-vae`. Restart Forge completely (kill all python3.10 processes) when changing flags — partial restarts leave old process on port 7860.
@@ -668,9 +703,12 @@ inference. The image service arbitrates the RAM around that:
 Net: Ollama is the always-on default; Forge is a transient guest that boots on
 demand, is evicted whenever the LLM needs RAM, and also evicts itself when idle.
 
-Local dev: set `VITE_IMAGE_URL=http://macmini.local:7871` in `.env.local` to hit
+Local dev: set `VITE_IMAGE_URL=http://127.0.0.1:7871` in `.env.local` to hit
 the service directly (it sends permissive CORS headers); otherwise the
 `/wheel-images` path 404s in `npm run dev` and the image simply fails gracefully.
+The service binds to **`127.0.0.1` only**, so it cannot be reached over the LAN
+by hostname. When running dev on another machine, forward the port first with
+`ssh -N -L 7871:127.0.0.1:7871 macmini`, then use the same URL.
 
 ### nginx location block (for reference)
 ```nginx
@@ -687,7 +725,7 @@ location /wheel-images/climate {
 location /wheel-images/ {
     proxy_pass http://127.0.0.1:7871/;
     proxy_http_version 1.1;
-    proxy_read_timeout 300s;
+    proxy_read_timeout 600s;
     proxy_buffering off;
     limit_req zone=ai burst=5 nodelay;
 }
