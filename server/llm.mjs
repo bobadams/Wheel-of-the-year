@@ -1,7 +1,7 @@
 // Wheel-of-the-Year LLM provider switch.
 //
-// Every LLM call the image service makes — the ecology image prompt and the two
-// phenology proposal lanes — goes through here, so one env var picks the engine:
+// Every LLM call the image service makes — the ecology image prompt — goes
+// through here, so one env var picks the engine:
 //
 //   LLM_PROVIDER=anthropic   (default) → Claude, via api.anthropic.com
 //   LLM_PROVIDER=ollama                → local llama on 127.0.0.1:11434
@@ -25,7 +25,7 @@
 //
 // Anthropic is a soft default: with no key, or on any API failure, the call
 // falls through to the local llama rather than returning nothing. That is what
-// keeps a dead or rotated key from emptying the phenology band. Callers pass a
+// keeps a dead or rotated key from breaking image generation. Callers pass a
 // `freeRam` hook that evicts Forge before local inference (the 8 GB Mac mini
 // can't hold both) — including on that fallback path, where Forge may still be
 // warm because the Anthropic path had no reason to evict it.
@@ -37,8 +37,8 @@ const ANTHROPIC_VERSION = '2023-06-01';
 
 const KEY_FILE   = process.env.ANTHROPIC_KEY_FILE ?? '/opt/homebrew/etc/nginx/anthropic-key.conf';
 const MODEL      = process.env.ANTHROPIC_MODEL ?? 'claude-opus-5';
-// Small structured asks — a naturalist's shortlist, a one-line scene fragment.
-// `low` keeps thinking (and latency) modest; raise it if proposals get thin.
+// A small ask — a one-line scene fragment. `low` keeps thinking (and latency)
+// modest; raise it if prompts get thin.
 const EFFORT     = process.env.ANTHROPIC_EFFORT ?? 'low';
 const MAX_TOKENS = Number(process.env.ANTHROPIC_MAX_TOKENS ?? 4000);
 

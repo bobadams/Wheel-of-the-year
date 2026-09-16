@@ -20,7 +20,6 @@ import { computeNormBounds } from '../draw/normalize.js';
 import { paintWheel, paintPaper } from '../draw/wheel.js';
 import { INK, hairline, drawTracked } from '../draw/theme.js';
 import { TRAD_COLORS, TRAD_LABELS, drawSymbol } from '../draw/holidays.js';
-import { CATEGORY_COLORS, CATEGORY_LABELS } from '../draw/phenology.js';
 import { coordLabel } from '../data/summary.js';
 import { seasonRangeLabel } from '../data/seasons.js';
 import { buildEmbeddedFontStyle, renderSVG, downloadFile, fileStem } from '../export/svg.js';
@@ -270,23 +269,6 @@ function keyBlocks(S) {
     });
   }
 
-  if (displayState.phenology && currentData.name) {
-    blocks.push({
-      heading: 'Wildlife & blooms',
-      items: Object.keys(CATEGORY_COLORS).map(c => ({
-        title: CATEGORY_LABELS[c],
-        swatch: (ctx, x, y, w, h) => {
-          ctx.save();
-          ctx.strokeStyle = CATEGORY_COLORS[c]; ctx.globalAlpha = 0.85;
-          ctx.lineWidth = Math.max(1.2, h * 0.22); ctx.lineCap = 'round';
-          ctx.beginPath(); ctx.moveTo(x + h * 0.2, y + h / 2); ctx.lineTo(x + w * 0.9, y + h / 2); ctx.stroke();
-          ctx.restore();
-        },
-      })),
-      note: 'Each arc spans the window of a characteristic local event. A dashed arc marked * is estimated rather than anchored to nearby observations.',
-    });
-  }
-
   return blocks;
 }
 
@@ -411,9 +393,8 @@ function bindRows(rows) {
  */
 function flowColumns(units, n, blockGap) {
   // A block is the unit of packing and is never split: doing so puts its
-  // heading in a different column from half its entries, which is how
-  // "Wildlife & blooms" once printed with three of its five categories
-  // orphaned overleaf. The search therefore starts at the tallest single
+  // heading in a different column from half its entries, orphaning the rest
+  // of it overleaf. The search therefore starts at the tallest single
   // block, so a long block simply sets the key's height (and the wheel takes
   // what is left) rather than being broken across a column boundary.
   const bound = units.map(rows => bindRows(rows));

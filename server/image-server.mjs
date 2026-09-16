@@ -10,12 +10,11 @@
 //     Diffusion prompt from `facts`, runs Forge txt2img, caches the PNG (and the
 //     prompt alongside it for debugging), and returns the PNG.
 //
-// Which LLM answers that (and phenology's proposals) is a switch: LLM_PROVIDER
+// Which LLM answers that is a switch: LLM_PROVIDER
 // is `anthropic` by default (Claude, using the same key as the astrology site)
 // or `ollama` for the local llama. See server/llm.mjs.
 //
-// It also hosts two sibling per-location caches keyed the same way:
-//   POST /phenology  → server/phenology.mjs   (seasonal wildlife/bloom events)
+// It also hosts a sibling per-location cache keyed the same way:
 //   GET/POST /climate → server/climate-cache.mjs (climate normals + daily actuals)
 //
 // With the local LLM, Forge and Ollama are kept from co-residing in RAM (the
@@ -28,8 +27,6 @@
 // Env:  PORT (default 7871), IMAGE_CACHE_DIR, FORGE_URL,
 //       FORGE_DIR, FORGE_LAUNCH, FORGE_BOOT_TIMEOUT, FORGE_IDLE_TIMEOUT
 //       LLM_PROVIDER, ANTHROPIC_* , OLLAMA_URL, OLLAMA_MODEL (see llm.mjs)
-//       EBIRD_API_KEY (optional; read by phenology.mjs — strengthens the birds
-//       occurrence gate. No-op if unset.)
 
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
@@ -37,7 +34,6 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { handlePhenology } from './phenology.mjs';
 import { readClimateRecord, writeClimateRecord } from './climate-cache.mjs';
 import { llmText, llmProvider } from './llm.mjs';
 
@@ -459,38 +455,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === '/phenology') {
-    try {
-      const { key, facts, force } = JSON.parse(await readBody(req) || '{}');
-      // Stream newline-delimited JSON: one line per animal/plant category as it
-      // becomes ready, so the client can render each the moment it lands. The
-      // 'X-Accel-Buffering: no' header (and nginx's `proxy_buffering off` for
-      // /wheel-images/) keeps the proxy from withholding lines until the end.
-      res.writeHead(200, {
-        'Content-Type': 'application/x-ndjson',
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no',
-      });
-      const emit = (category, events) => {
-        res.write(JSON.stringify({ category, events }) + '\n');
-      };
-      await handlePhenology(sanitizeKey(key), facts, {
-        force: !!force, cacheDir: CACHE_DIR, ollamaUrl: OLLAMA_URL, ollamaModel: OLLAMA_MODEL,
-        freeRam: freeRamForOllama, // evict a warm Forge before a local LLM call
-      }, emit);
-      res.end();
-    } catch (e) {
-      console.error('[image-server] /phenology failed:', e.message);
-      // Headers may already be sent (mid-stream); end the response either way.
-      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(res.headersSent ? '' : JSON.stringify({ error: e.message }));
-    }
-    return;
-  }
-
-  // Climate cache — a plain disk-backed JSON store. Unlike /generate and
-  // /phenology there is no LLM or Forge work behind it, so it stays cheap enough
-  // to hit several times per page load.
+  // Climate cache — a plain disk-backed JSON store. Unlike /generate there is
+  // no LLM or Forge work behind it, so it stays cheap enough to hit several
+  // times per page load.
   if (url.pathname === '/climate') {
     try {
       if (req.method === 'GET') {

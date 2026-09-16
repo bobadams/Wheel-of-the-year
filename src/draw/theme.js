@@ -24,45 +24,41 @@ export const INK = {
 // ─── Radial registers (fractions of canvas.W) ────────────────────────────────
 // Read outward. Each band is sized so the one outside it starts clear of the
 // tallest thing the previous one can draw — the outermost annotation (a
-// phenology label on the top level) lands at ~0.490, just inside the canvas.
+// holiday label on the top level, halo included) lands at ~0.496, just inside
+// the canvas. Nothing sits outside the holidays, so if they move inward the
+// whole table should scale up with them rather than leave an empty margin.
 export const R = {
   // Center cartouche: location, the year's headline numbers, today's date.
-  holeOuter:     0.132,
+  holeOuter:     0.1426,
 
   // Data rings. computeRingLayouts() divides this span between visible rings.
-  ringStart:     0.138,
-  ringEnd:       0.334,
+  ringStart:     0.1490,
+  ringEnd:       0.3607,
 
   // Solstice / equinox labels ride in the gap above the rings, curved to the
   // circle so they stay upright all the way round. The gap is wide enough that
   // the labels touch neither the outermost ring's profile nor the calendar.
-  seasonLabel:   0.3470,
+  seasonLabel:   0.3748,
 
   // Calendar band: alternating month tints, boundary ticks, curved month names.
-  calInner:      0.3600,
-  calOuter:      0.3900,
+  calInner:      0.3888,
+  calOuter:      0.4212,
 
   // Moon lane, then the two annotation registers.
-  moon:          0.3985,
-  moonDot:       0.0054,
+  moon:          0.4304,
+  moonDot:       0.0058,
 
-  holidayMark:   0.4065,
-  holidaySym:    0.0048,
-  holidayLabel:  0.4160,   // innermost of four candidate label radii
-  holidayStep:   0.0118,
-  holidayFont:   0.0112,
+  holidayMark:   0.4390,
+  holidaySym:    0.0052,
+  holidayLabel:  0.4493,   // innermost of four candidate label radii
+  holidayStep:   0.0127,
+  holidayFont:   0.0121,
   holidayLevels: 4,
 
-  phenoBase:     0.4610,
-  phenoStep:     0.0106,
-  phenoArc:      0.0034,
-  phenoFont:     0.0102,
-  phenoLevels:   3,
-
   // The solstice/equinox cross reaches just past the calendar band.
-  axisOuter:     0.3940,
+  axisOuter:     0.4255,
   // Today's radial line spans the data rings and stops on the calendar band.
-  todayOuter:    0.3900,
+  todayOuter:    0.4212,
 };
 
 /**

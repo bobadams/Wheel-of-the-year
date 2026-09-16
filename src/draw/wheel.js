@@ -6,7 +6,6 @@ import { drawRing } from './ring.js';
 import { drawSeasonBand } from './seasons.js';
 import { drawMoon, drawTicks, drawAxes, drawCenter } from './decorations.js';
 import { drawHolidays } from './holidays.js';
-import { drawPhenology } from './phenology.js';
 import { drawMinMaxMarkers } from './labels.js';
 import { drawWindBarbs } from './windBarbs.js';
 import { drawActualsLine, drawTodayDot } from './actuals.js';
@@ -56,7 +55,6 @@ export function paintWheel(opts = {}) {
   if (displayState.moon)      drawMoon();
   if (displayState.axis)      drawAxes();
   if (displayState.holidays)  drawHolidays();
-  if (displayState.phenology) drawPhenology();
   drawCenter(opts.center);
 }
 

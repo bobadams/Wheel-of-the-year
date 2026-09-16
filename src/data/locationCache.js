@@ -49,7 +49,7 @@ const EVI_FLUSH_EVERY = 5;
 
 /**
  * Stable cache key for a location — slugified name, else rounded lat/lon. Shared
- * with the ecology-image and phenology caches so all three key alike.
+ * with the ecology-image cache so both key alike.
  */
 export function locationKey(data) {
   const base = data.name

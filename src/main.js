@@ -5,7 +5,6 @@ import {
   canvas, ringOrder, ringState, displayState,
   currentData, actuals,
   setCurrentData, mergeCurrentData, setActivePreset, setActuals, setTodayDOY,
-  setPhenologyEvents, setPhenologyCategory,
 } from './state.js';
 import { computeRingLayouts } from './draw/layout.js';
 import { paintWheel, paintPaper } from './draw/wheel.js';
@@ -18,7 +17,6 @@ import {
   fetchActuals, fetchRecentEVI, fetchActualsPm25, fetchActualsVisibility,
   fetchActualsDewpoint, calendarDOY, todayDate,
 } from './fetch/actuals.js';
-import { fetchPhenology } from './fetch/phenology.js';
 import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
 import { buildRingControls, toggleDisplay, setDrawCallback, refreshSourceBadges } from './ui/controls.js';
@@ -246,10 +244,6 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
     if (pm25) record({ normals: normalsFromData(currentData, ['pm25']) });
   }
 
-  // Phenology band — non-blocking; biome is informed by EVI, so start it once
-  // that has landed. Has its own server-side cache. Fails silently.
-  loadPhenology(currentData);
-
   // ── Visibility normals (ERA5 2010–2020) ───────────────────────────────────
   if (needVisibility) {
     setStatus('loading', `${name} — fetching visibility normals…`);
@@ -329,7 +323,6 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
  */
 async function showLocation({ name, lat, lon, found = false, remember = true }) {
   setActuals(null); setTodayDOY(null);
-  setPhenologyEvents([]);
   setEviProgress(false);
 
   // Draw immediately with just location so decorations/labels appear right away
@@ -364,35 +357,17 @@ async function fetchCity({ remember = true } = {}) {
   }
 }
 
-// Fetch the phenology band for `data` (non-blocking). Tagged with the location
-// name so a stale response from a previous location is ignored when the user
-// switches quickly. Fails silently — the band just stays empty.
-function loadPhenology(data, opts = {}) {
-  const forName = data.name;
-  setPhenologyEvents([]);
-  draw();
-  fetchPhenology(data, {
-    ...opts,
-    // Render each animal/plant category the moment it streams in (ignoring a
-    // stale response if the user has since switched locations).
-    onCategory: (category, events) => {
-      if (currentData.name === forName) { setPhenologyCategory(category, events); draw(); }
-    },
-  }).catch(() => {});
-}
-
 // ─── Presets ─────────────────────────────────────────────────────────────────
 function loadPreset(p) {
   setCurrentData(p.data);
   setActuals(null); setTodayDOY(null);
-  setPhenologyEvents([]);
   document.getElementById('cityInput').value = p.city;
   setActivePreset(p.label);
   setLastLocation({ preset: p.label });
   refreshPresets(); refreshSourceBadges(); draw();
   setStatus('ok', `Loaded built-in data for ${p.data.name} — fetching actuals overlay…`);
-  // Normals ship in the bundle; the actuals overlay and the phenology band come
-  // from the location cache, topped up from the upstream APIs.
+  // Normals ship in the bundle; the actuals overlay comes from the location
+  // cache, topped up from the upstream APIs.
   loadLocation({ key: locationKey(p.data), name: p.data.name, lat: p.data.lat, lon: p.data.lon, skipNormals: true })
     .catch(e => setStatus('error', `Preset loaded. Actuals failed: ${e.message}`));
 }
@@ -709,7 +684,6 @@ function init() {
   window.exportPosterSVG = exportPosterSVG;
   window.copyLink      = copyLink;
   window.toggleDisplay = toggleDisplay;
-  window.refreshPhenology = () => loadPhenology(currentData, { force: true });
 
   document.getElementById('cityInput').addEventListener('keydown', e => { if (e.key === 'Enter') fetchCity(); });
   window.addEventListener('resize', () => { resizeCanvas(); draw(); });
@@ -744,8 +718,8 @@ function init() {
     return;
   }
 
-  // Nothing saved: the default preset's actuals overlay and phenology band (its
-  // normals ship in the bundle).
+  // Nothing saved: the default preset's actuals overlay (its normals ship in
+  // the bundle).
   const p0 = PRESETS[0].data;
   setStatus('loading', 'Fetching actuals for past year…');
   loadLocation({ key: locationKey(p0), name: p0.name, lat: p0.lat, lon: p0.lon, skipNormals: true })

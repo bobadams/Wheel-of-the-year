@@ -27,8 +27,7 @@ No backend, no database, no runtime dependencies.
 ├── scripts/
 │   └── generate-preset-oakland.js  # Regenerates Oakland preset from live APIs
 ├── server/
-│   ├── image-server.mjs          # Node service on :7871 — routes /generate, /phenology, /climate
-│   ├── phenology.mjs             # Seasonal wildlife/bloom events (LLM + iNat/GBIF)
+│   ├── image-server.mjs          # Node service on :7871 — routes /generate, /climate
 │   ├── llm.mjs                   # LLM provider switch: Anthropic (default) or Ollama
 │   └── climate-cache.mjs         # Per-location store: climate normals + daily actuals
 └── src/
@@ -255,15 +254,15 @@ difference in sheet size, not in how far away the reader is standing.
 ### The radial registers live in one place
 
 `R` in `src/draw/theme.js` holds every radius the wheel uses, outward from the
-centre hole to the outermost phenology label at ~0.490·W. They are in one table
+centre hole to the outermost holiday label at ~0.496·W. They are in one table
 because the constraint that matters is between them: the annotation bands are
 packed close enough that moving one without looking at its neighbours silently
-overlaps them. (Holiday labels and phenology arcs used to occupy overlapping
-radii; nothing surfaced it because the phenology band is empty until the service
-answers.)
+overlaps them. Nothing is drawn outside the holidays, so the table is scaled to
+put them at the edge — take a band away and the rest should scale up to fill,
+not leave an empty margin.
 
 Reading outward: centre cartouche · data rings · solstice/equinox labels ·
-calendar band · moon lane · holiday symbols and labels · phenology arcs.
+calendar band · moon lane · holiday symbols and labels.
 
 ### Tracking has to be drawn, not spaced
 
@@ -621,8 +620,8 @@ button (forces regeneration, bypassing the cache).
 
 ### Which LLM — `server/llm.mjs`
 
-Every LLM call the service makes — the ecology image prompt and phenology's two
-proposal lanes — goes through `server/llm.mjs`, so one env var picks the engine:
+Every LLM call the service makes — the ecology image prompt — goes through
+`server/llm.mjs`, so one env var picks the engine:
 
 | `LLM_PROVIDER` | Engine | Notes |
 |---|---|---|
@@ -641,8 +640,8 @@ hop and share the browser-facing `ai` rate-limit bucket.
 
 Anthropic is a **soft** default: with no key, or on any API failure (revoked key,
 rate limit, outage), the call falls through to the local llama with a warning
-rather than returning nothing — that is what keeps a dead key from emptying the
-phenology band. Watch for `[llm] Anthropic call failed` in
+rather than returning nothing — that is what keeps a dead key from breaking
+image generation. Watch for `[llm] Anthropic call failed` in
 `~/Library/Logs/wheel-image-server.log`; it means the intended engine is not
 answering and the weaker local model is doing the work.
 
@@ -650,15 +649,7 @@ answering and the weaker local model is doing the work.
 - **Location on server:** `~/Sites/wheel-of-the-year/server/image-server.mjs`
 - **Port:** `127.0.0.1:7871` (env `PORT`); cache dir `image-cache/` (env `IMAGE_CACHE_DIR`)
 - **Upstreams:** `api.anthropic.com` (or local Ollama `127.0.0.1:11434` — see
-  "Which LLM" above) and Forge `127.0.0.1:7860`;
-  the phenology service also calls out to iNaturalist, GBIF, and Wikipedia (public
-  APIs, no key) and — if `EBIRD_API_KEY` is set — eBird.
-- **Optional env `EBIRD_API_KEY`:** read by `server/phenology.mjs`. When set, an
-  eBird nearby-observations call strengthens the **birds** occurrence gate; when
-  unset it's a clean no-op (bird timing still comes from GBIF, which ingests eBird
-  data anyway). eBird's weekly-frequency bar charts aren't a public API endpoint,
-  so this is used only as an occurrence check, not for timing. Get a key at
-  `https://ebird.org/api/keygen`; set it in the launchd plist's `EnvironmentVariables`.
+  "Which LLM" above) and Forge `127.0.0.1:7860`.
 - **launchd:** `server/com.wheel.image-server.plist` → `~/Library/LaunchAgents/`
   (RunAtLoad + KeepAlive); logs to `~/Library/Logs/wheel-image-server.log`
 - **nginx:** a `/wheel-images/` location proxies to `http://127.0.0.1:7871/`
@@ -689,10 +680,9 @@ inference. The image service arbitrates the RAM around that:
   `keep_alive: 0`, so llama frees its model RAM before Forge loads its larger one.
 - **Forge evicted before any Ollama inference** — `freeRamForOllama()` kills a warm
   Forge right before the local model is used. It is handed to `llm.mjs` as the
-  `freeRam` opt (by image-prompt composition *and* phenology's proposal calls) and
-  fired there, immediately before an Ollama request — including the fallback after
-  an Anthropic failure, where Forge may still be warm. It's a no-op when Forge is
-  down, and phenology only reaches it on a real generation, not a cache replay.
+  `freeRam` opt by image-prompt composition and fired there, immediately before an
+  Ollama request — including the fallback after an Anthropic failure, where Forge
+  may still be warm. It's a no-op when Forge is down.
   Forge reboots on demand for the next image.
 - **Forge shut down when idle** — after `FORGE_IDLE_TIMEOUT` (default 600s / 10 min)
   with no generations, `shutdownForge()` kills the process on the Forge port
@@ -743,9 +733,9 @@ missing.
 - **Client:** `src/data/locationCache.js` (transport + merge helpers) driven by
   `loadLocation()` in `src/main.js`.
 - **Server:** `server/climate-cache.mjs`, mounted on the image service at
-  `GET /climate?key=…` and `POST /climate`. Records live beside the image and
-  phenology caches in `image-cache/` as `<key>.climate.json` (~35 KB each), and
-  are keyed by the same slugified location name all three caches use
+  `GET /climate?key=…` and `POST /climate`. Records live beside the image cache
+  in `image-cache/` as `<key>.climate.json` (~35 KB each), and are keyed by the
+  same slugified location name both caches use
   (`locationKey`, exported from `locationCache.js`).
 
 The server is a **dumb store** — the browser owns all fetching. A record has two
