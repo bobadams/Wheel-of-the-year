@@ -1,8 +1,8 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { canvas, ringOrder, ringState, displayState, currentData, actuals, seasons } from '../state.js';
 import { seasonAt, seasonRangeLabel } from '../data/seasons.js';
-import { doy2angle, norm, SOLSTICE_OFFSET } from '../draw/canvas.js';
-import { DIM, MON_S } from '../draw/decorations.js';
+import { angle2doy } from '../draw/canvas.js';
+import { doyLabel } from '../data/calendar.js';
 import { R } from '../draw/theme.js';
 
 const ICONS = { temp: '🌡', rain: '🌧', daylight: '☀️', evi: '🌿', wind: '💨', dewpoint: '💧', seasons: '🍂' };
@@ -21,12 +21,9 @@ export function setupTooltip() {
     // Only the data rings carry per-day values worth reporting.
     if (r < canvas.W * R.ringStart || r > canvas.W * R.ringEnd) { tip.style.display = 'none'; return; }
 
-    let frac = (Math.atan2(dy, dx) - SOLSTICE_OFFSET) / (2 * Math.PI);
-    frac = ((frac % 1) + 1) % 1;
-    const doy = Math.min(364, Math.floor(frac * 365));
-
-    let acc = 0, m = 0;
-    for (let i = 0; i < 12; i++) { if (acc + DIM[i] > doy) { m = i; break; } acc += DIM[i]; }
+    // The day whose arc is under the pointer — the same mapping the rings are
+    // drawn with, so the date read out is the day painted beneath it.
+    const doy = Math.min(364, Math.floor(angle2doy(Math.atan2(dy, dx))));
 
     tip.style.display = 'block';
     tip.style.left = (e.clientX + 14) + 'px';
@@ -53,8 +50,11 @@ export function setupTooltip() {
       if (actuals && displayState.actuals && ACTUALS_RINGS.has(id)) {
         const entries = actuals[id];
         if (entries?.length) {
-          const entry = entries.reduce((b, x) => Math.abs(x.doy - doy) < Math.abs(b.doy - doy) ? x : b, entries[0]);
-          if (Math.abs(entry.doy - doy) <= 8) {
+          // Distance around the wheel, so an observation just before the top
+          // of the wheel is found from just after it.
+          const gap = x => { const d = Math.abs(x.doy - doy); return Math.min(d, 365 - d); };
+          const entry = entries.reduce((b, x) => gap(x) < gap(b) ? x : b, entries[0]);
+          if (gap(entry) <= 8) {
             const ad   = id === 'evi' ? entry.value.toFixed(3) : id === 'rain' ? entry.value.toFixed(2) : Math.round(entry.value * 10) / 10;
             const diff = Math.round((entry.value - v) * 10) / 10;
             actual = ` <span style="opacity:.7;font-size:.85em">(actual: ${ad}, ${diff > 0 ? '+' : ''}${diff})</span>`;
@@ -67,7 +67,7 @@ export function setupTooltip() {
       return `<span style="color:${ringState[id].color}">${ICONS[id] ?? '·'}</span> ${disp} ${r.unit}${srcTag}${actual}`;
     }).filter(Boolean).join('<br>');
 
-    tip.innerHTML = `<strong>${MON_S[m]} ${doy - acc + 1}</strong><br>${rows}`;
+    tip.innerHTML = `<strong>${doyLabel(doy)}</strong><br>${rows}`;
   });
 
   el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });

@@ -21,6 +21,7 @@ import { fetchModisEVI } from '../src/fetch/evi.js';
 import { fetchPm25 } from '../src/fetch/pm25.js';
 import { fetchVisibility } from '../src/fetch/visibility.js';
 import { fetchDewpoint } from '../src/fetch/humidity.js';
+import { dateToDOY, doyToJan1 } from '../src/data/calendar.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -30,18 +31,10 @@ const LAT  = 37.8044;
 const LON  = -122.2712;
 const NAME = 'Oakland, California';
 
-const DIM = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
-/** Map a YYYY-MM-DD string to 0-based 365-day DOY. Returns -1 for Feb 29. */
-function dateToCalDOY(dateStr) {
-  const [, mo, dy] = dateStr.split('-').map(Number);
-  if (mo === 2 && dy === 29) return -1;
-  let doy = 0;
-  for (let m = 0; m < mo - 1; m++) doy += DIM[m];
-  return Math.min(doy + dy - 1, 364);
-}
+/** Map a YYYY-MM-DD string to the wheel's DOY (0 = winter solstice). Returns -1 for Feb 29. */
+const dateToCalDOY = dateStr => dateToDOY(dateStr) ?? -1;
 
 /** Average same-DOY values across all years, fill any gaps by linear interp. */
 function computeDOYNormals(dates, values) {
@@ -128,7 +121,7 @@ function computeWindDirNormals(dates, dirs) {
 
 function computeDaylight() {
   return Array.from({ length: 365 }, (_, i) => {
-    const d    = i + 1;
+    const d    = doyToJan1(i) + 1;   // the declination formula counts from Jan 1
     const decl = 23.45 * Math.sin((360 / 365) * (d - 81) * Math.PI / 180);
     const cosH = -Math.tan(LAT * Math.PI / 180) * Math.tan(decl * Math.PI / 180);
     if (cosH <= -1) return 24;
@@ -254,6 +247,7 @@ async function main() {
 //         Best-contrast pixel at ${sampLat.toFixed(5)}, ${sampLon.toFixed(5)} (selected within 10 km of city center)
 //   PM2.5: CAMS reanalysis, hourly, 2014-01-01 – 2023-12-31, via Open-Meteo air quality API
 //   Daylight: astronomical calculation for lat ${LAT}°
+// Every 365-point series is indexed by DOY, where DOY 0 = Dec 21 (the winter solstice).
 // Generated: ${new Date().toISOString()}\n\n`;
 
   const out = header

@@ -7,7 +7,7 @@
  * nothing here starts from a season vocabulary and looks for its dates — it
  * finds the structure in the year first and names it afterwards.
  *
- * Three stages, in this order, and the order is the whole design:
+ * Four stages, in this order, and the order is the whole design:
  *
  *   1. GATE, in absolute units. Which axes does this place actually cycle on?
  *      This must happen BEFORE any normalization, because z-scoring divides the
@@ -17,27 +17,30 @@
  *      gate is what lets a place legitimately come back with no seasons at all.
  *
  *   2. SEGMENT the year on the surviving axes into contiguous arcs, by exact
- *      dynamic programming over a circular series. The boundaries and the
- *      *number* of seasons both fall out of the data; `chooseCount` accepts one
- *      more season only when it buys enough fit to justify itself and leaves
- *      every season long enough to be a season.
+ *      dynamic programming over a circular series. One pass yields the best
+ *      split for every count from one to MAX_SEASONS.
  *
- *   3. NAME each arc from its own signature. Level alone can't separate spring
- *      from autumn — they sit at the same temperature — so the namer reads the
- *      direction of travel too, which is what lets a genuinely four-season
- *      climate come back as Winter/Spring/Summer/Autumn on dates nobody typed in.
+ *   3. THE QUARTET, tested on the best four-arc split before anything is merged
+ *      or counted. A year whose structure is a wide thermal cycle is given
+ *      Winter/Spring/Summer/Autumn — on dates read off its own temperature
+ *      curve, because those are temperature names.
+ *
+ *   4. Otherwise COUNT the seasons (`chooseCount`), NAME each arc from its own
+ *      signature, and fold together neighbours that turn out to be one season
+ *      by stepping down to the best split with one fewer.
  *
  * Everything is pure: hand it a `currentData` and it returns a description. It
  * is recomputed in state.js on every data change, which is cheap enough (a few
  * ms) to need no caching and keeps it impossible for the band to disagree with
  * the rings it was derived from.
+ *
+ * The constants below are tuned, and several sit close to the point where a
+ * season appears or vanishes. `npm run seasons-report` runs this module over a
+ * fixed set of reference climates and lists every place a change moved.
  */
 
 import { gaussianSmooth } from '../utils/smooth.js';
-import { doyLabel } from './summary.js';
-
-const N = 365;
-const DIM = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+import { N, DIM, MONTH_START, doyLabel } from './calendar.js';
 
 // Year binned to weeks for the segmentation. The boundary of a season is not a
 // day-precise thing — a 30-year normal has no such resolution — and weekly bins
@@ -57,9 +60,33 @@ const RATE_WEIGHT = 0.55;
 const MIN_SEASON_DAYS = 30;
 
 // Extra fit (as a fraction of total variance) that one more season must buy
-// before it is accepted. Tuned so a Mediterranean year resolves to three and a
-// bimodal equatorial one to four, without either running to the cap.
+// before it is accepted. Too low and long seasons split in half; too high and
+// short but genuinely distinct seasons are refused, since the fit a season buys
+// grows with its length. A plain sinusoid gains about 0.10 from its fourth arc,
+// so this sits close to where counts flip — check the report after moving it.
 const MIN_GAIN = 0.08;
+
+// Rain and snow are square-rooted before they are z-scored. Both are heavily
+// skewed — months near zero, then a peak — and on the raw values the peak holds
+// nearly all the variance, so the segmentation spends its seasons carving up the
+// wet season and lumps the rest of the year together. The square root is the
+// usual variance-stabilising transform for amounts like these. Only the
+// segmentation and the z-scores see it; `means` stay in real units.
+const SQRT_AXES = new Set(['rain', 'snow']);
+
+// An axis that misses its gate but reaches this fraction of the threshold may
+// help NAME a season another axis found. It never helps define one — that would
+// lower the gate by the back door.
+const NEAR_MISS = 0.75;
+
+// Neighbouring arcs whose level signatures are closer than this (RMS of the
+// z-score difference over the gated axes) are one season that only the rate
+// features split.
+const MERGE_DISTANCE = 0.35;
+
+// How fast temperature must be moving (as a rate z-score) for a shoulder with
+// nothing remarkable in its levels to be named for its direction of travel.
+const SHOULDER_TREND = 0.5;
 
 const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
 const sd   = a => { const m = mean(a); return Math.sqrt(mean(a.map(v => (v - m) ** 2))); };
@@ -82,9 +109,9 @@ const spread = a => quantile(a, 0.95) - quantile(a, 0.05);
  * wet season is the *concentration* of the rain, not how many inches fall.
  */
 export function rainfallSeasonality(rain) {
-  const months = [];
-  let i = 0;
-  for (let m = 0; m < 12; m++) { months.push(rain.slice(i, i + DIM[m]).reduce((s, v) => s + v, 0)); i += DIM[m]; }
+  // Calendar months, so December is summed across the top of the wheel.
+  const months = MONTH_START.map((start, m) =>
+    Array.from({ length: DIM[m] }, (_, d) => rain[(start + d) % N]).reduce((s, v) => s + v, 0));
   const total = months.reduce((s, v) => s + v, 0);
   if (!(total > 0)) return 0;
   return months.reduce((s, v) => s + Math.abs(v - total / 12), 0) / total;
@@ -98,21 +125,31 @@ export function rainfallSeasonality(rain) {
  * the cost of too low a threshold is inventing seasons for a place that has
  * none, which is the one failure this whole module exists to avoid. `strength`
  * measures the cycle; `words` supplies the vocabulary the namer draws on.
+ *
+ * Every word must agree in direction with the season's departure from its own
+ * year. The word itself may be chosen from the absolute value, but a season
+ * below the year's mean is never named for being high, nor one above it for
+ * being low.
  */
 export const SEASON_AXES = [
   {
     id: 'temp', strength: spread, min: 9, unit: '°F', order: 0,
-    // Temperature words are chosen from the ABSOLUTE mean, not the z-score. A
-    // z-score is relative to the location's own year, so Darwin's coolest
-    // season — 86°F — comes out "cold" against its own mean, which is true of
-    // the statistic and false of the place. The z-score still decides whether
-    // temperature is worth mentioning at all; only the word itself is absolute.
-    word: (z, v) => v < 38 ? 'frozen' : v < 52 ? 'cold' : v < 63 ? 'cool'
-      : v < 74 ? null /* unremarkable — let a stronger axis carry the name */
-      : v < 84 ? 'warm' : 'hot',
+    // `temp` is the mean daily HIGH. The word is chosen from the ABSOLUTE mean,
+    // not the z-score: a z-score is relative to the location's own year, so
+    // Darwin's coolest season — 86°F — is "cold" against its own mean, which is
+    // true of the statistic and false of the place. The z-score still picks the
+    // SIDE. Timbuktu's coolest season averages 85°F highs, and without that it
+    // would be named "hot" for being hot in absolute terms while being the
+    // relief from the real hot season on either side of it.
+    word: (z, v) => z < 0
+      ? (v < 38 ? 'frozen' : v < 52 ? 'cold' : v < 63 ? 'cool' : null)
+      : (v >= 84 ? 'hot' : v >= 74 ? 'warm' : null /* unremarkable — let a stronger axis carry the name */),
   },
   {
     id: 'rain', strength: rainfallSeasonality, min: 0.40, unit: 'index', order: 2,
+    // The index works on monthly totals, which already average out day-to-day
+    // noise, so it alone is measured on the raw series.
+    gateRaw: true,
     // Wet and dry are genuinely relative: a desert's wet season is still its wet
     // season, and that is how people talk about it.
     word: z => (z >= 0 ? 'wet' : 'dry'),
@@ -124,7 +161,9 @@ export const SEASON_AXES = [
   {
     id: 'dewpoint', strength: spread, min: 9, unit: '°F', order: 1,
     // 65°F dew point is the conventional line where air starts to feel muggy.
-    word: (z, v) => v >= 66 ? 'muggy' : v >= 57 ? 'humid' : v <= 40 ? 'crisp' : null,
+    word: (z, v) => z > 0
+      ? (v >= 66 ? 'muggy' : v >= 57 ? 'humid' : null)
+      : (v <= 40 ? 'crisp' : null),
   },
   {
     id: 'snow', strength: spread, min: 1.0, unit: 'in', order: 3,
@@ -144,18 +183,43 @@ export const SEASON_AXES = [
 const usable = a => Array.isArray(a) && a.length === N && a.filter(v => Number.isFinite(v)).length > N * 0.9;
 
 /**
- * Which axes of `data` carry a real annual cycle. Runs on the raw series, in
- * their own units — see the note at the top about why this cannot come after
+ * Which axes of `data` carry a real annual cycle. Runs on the series in their
+ * own units — see the note at the top about why this cannot come after
  * normalization.
+ *
+ * The spread is measured on the SMOOTHED series. A 30-year daily normal still
+ * carries day-to-day noise, and for cloud cover that noise alone is as wide as
+ * the threshold: Christchurch's raw cloud spread is 18%, its smoothed annual
+ * cycle under 8%. Measured raw, the gate passed exactly the noise it exists to
+ * reject.
+ *
+ * `nearMiss` marks an axis that failed but came within NEAR_MISS of passing.
  */
 export function gateAxes(data) {
   return SEASON_AXES
     .filter(ax => usable(data[ax.id]))
     .map(ax => {
       const series = data[ax.id].map(v => (Number.isFinite(v) ? v : 0));
-      return { ...ax, series, value: ax.strength(series) };
-    })
-    .map(ax => ({ ...ax, passed: ax.value >= ax.min }));
+      const smooth = gaussianSmooth(series, 7, 14);
+      const value = ax.strength(ax.gateRaw ? series : smooth);
+      return {
+        ...ax, series, smooth, value,
+        passed: value >= ax.min,
+        nearMiss: value < ax.min && value >= NEAR_MISS * ax.min,
+      };
+    });
+}
+
+/**
+ * The per-day series an axis contributes: its `level` (z-scored, square-rooted
+ * first for SQRT_AXES), its `rate` (the z-scored 14-day change in that level),
+ * and `raw` — the smoothed series in its own units, for the means.
+ */
+function profile(ax) {
+  const shaped = SQRT_AXES.has(ax.id) ? ax.smooth.map(v => Math.sqrt(Math.max(0, v))) : ax.smooth;
+  const level = zscore(shaped);
+  const rate = zscore(level.map((_, i) => level[(i + 7) % N] - level[(i - 7 + N) % N]));
+  return { level, rate, raw: ax.smooth };
 }
 
 /** Within-segment sum of squares over bins [i, j) of every feature, from prefix sums. */
@@ -234,25 +298,27 @@ function segmentAll(features, kMax) {
 /** Length in days of the segment running from `start` to `end` around the circle. */
 const spanDays = (start, end) => ((end - start + N) % N) || N;
 
+/** Length in days of the shortest arc a set of boundaries makes. */
+const shortestArc = bounds => Math.min(...bounds.map((s, i) => spanDays(s, bounds[(i + 1) % bounds.length])));
+
 /**
- * How many seasons this year actually has.
+ * How many seasons this year actually has, from the table `segmentAll` built.
  *
- * Accepts one more only when it buys `MIN_GAIN` of extra explained variance and
- * leaves no segment shorter than `MIN_SEASON_DAYS`. Without the length rule the
- * fit keeps improving forever by shaving slivers off the ends of real seasons.
+ * Accepts one more only when it buys `MIN_GAIN` of extra explained variance over
+ * one fewer and leaves no segment shorter than `MIN_SEASON_DAYS`. Without the
+ * length rule the fit keeps improving forever by shaving slivers off the ends of
+ * real seasons.
  */
-function chooseCount(features, totalVar) {
-  const table = segmentAll(features, MAX_SEASONS);
-  let chosen = 1, prevEV = 0, bestFit = null;
+function chooseCount(table, totalVar) {
+  let chosen = 1, prevEV = 0;
   for (let k = 2; k <= MAX_SEASONS; k++) {
     const fit = table[k];
     if (!fit?.bounds) continue;
     const ev = 1 - fit.cost / totalVar;
-    const shortest = Math.min(...fit.bounds.map((s, i) => spanDays(s, fit.bounds[(i + 1) % fit.bounds.length])));
-    if (ev - prevEV >= MIN_GAIN && shortest >= MIN_SEASON_DAYS) { chosen = k; bestFit = fit; }
+    if (ev - prevEV >= MIN_GAIN && shortestArc(fit.bounds) >= MIN_SEASON_DAYS) chosen = k;
     prevEV = ev;
   }
-  return { count: chosen, fit: bestFit };
+  return chosen;
 }
 
 // Season colors, keyed by the descriptor that ends up leading the name. Drawn
@@ -264,7 +330,7 @@ const SEASON_COLORS = {
   green: '#4a7c3f', bare: '#8a7048',
   snowy: '#9fc0d4', foggy: '#8c9498', clear: '#b9a97e', grey: '#8c9498',
   muggy: '#5f8f7a', humid: '#6f9a86', crisp: '#9aa8b0',
-  mild: '#9a9478',
+  mild: '#9a9478', warming: '#4a7c3f', cooling: '#8a7048',
 };
 
 // Single-word names that read better as a noun than as an adjective.
@@ -282,16 +348,23 @@ const TITLE = s => s.charAt(0).toUpperCase() + s.slice(1);
  *
  * Takes the one or two axes it departs from the annual mean on most strongly and
  * composes "<qualifier> <head> season". A segment that is unremarkable on every
- * axis is the shoulder of the year and is named for that rather than given a
- * spurious descriptor.
+ * axis is the shoulder of the year: it is named for its direction of travel when
+ * temperature is clearly moving — which keeps a mild spring and a mild autumn
+ * from both being "Mild season" — and simply "Mild season" when it is not.
  */
-function nameFromSignature(sig, means, axes) {
+function nameFromSignature(sig, means, trend, axes) {
   const ranked = axes
     .map(ax => ({ ax, z: sig[ax.id], word: ax.word(sig[ax.id], means[ax.id]) }))
     .filter(e => Number.isFinite(e.z) && Math.abs(e.z) >= 0.45 && e.word)
     .sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
 
-  if (!ranked.length) return { name: 'Mild season', key: 'mild' };
+  if (!ranked.length) {
+    const t = trend.temp;
+    if (Number.isFinite(t) && Math.abs(t) >= SHOULDER_TREND) {
+      return t > 0 ? { name: 'Warming season', key: 'warming' } : { name: 'Cooling season', key: 'cooling' };
+    }
+    return { name: 'Mild season', key: 'mild' };
+  }
 
   const kept = [ranked[0]];
   if (ranked[1] && Math.abs(ranked[1].z) >= SECOND_WORD_RATIO * Math.abs(ranked[0].z)) {
@@ -300,9 +373,12 @@ function nameFromSignature(sig, means, axes) {
 
   // Rank picks *which* words; SEASON_AXES.order picks the order they are said
   // in — English puts the temperature first ("cool wet season", never "wet cool
-  // season"), regardless of which axis departs further from the mean.
-  const phrase = [...kept].sort((a, b) => a.ax.order - b.ax.order).map(e => e.word).join(' ');
-  const name = kept.length === 1 ? (NAME_OVERRIDES[phrase] ?? `${TITLE(phrase)} season`)
+  // season"), regardless of which axis departs further from the mean. Two axes
+  // can offer the same word (cloud and visibility both say "clear"), and it is
+  // said once.
+  const words = [...new Set([...kept].sort((a, b) => a.ax.order - b.ax.order).map(e => e.word))];
+  const phrase = words.join(' ');
+  const name = words.length === 1 ? (NAME_OVERRIDES[phrase] ?? `${TITLE(phrase)} season`)
     : `${TITLE(phrase)} season`;
   // The color follows the strongest axis, not the first word said.
   return { name, key: ranked[0].word };
@@ -317,48 +393,79 @@ function nameFromSignature(sig, means, axes) {
 const QUARTET_MIN_SWING_F = 25;
 const QUARTET_TEMP_SHARE  = 0.8;
 
+// How close to its coldest (warmest) point a day must be to belong to winter
+// (summer), as a fraction of the annual range. (1 − cos 45°)/2 is the value at
+// which a pure sinusoid divides into four equal quarters; a real curve that
+// lingers near its trough — a long continental winter — gets a longer winter
+// from the same rule.
+const QUARTET_EXTREME = (1 - Math.SQRT1_2) / 2;
+
+const QUARTET_KEYS = { Winter: 'cold', Spring: 'green', Summer: 'hot', Autumn: 'bare' };
+
 /**
- * Is this a four-season thermal year? True when temperature passed the gate with
- * a wide swing, there are exactly four seasons, and temperature is among the
- * axes separating them most.
+ * Is this a four-season thermal year? Tested on the best four-arc split, before
+ * anything is merged and whatever count `chooseCount` would pick: the quartet
+ * is a reading of the thermal cycle, and should not appear or vanish with a
+ * threshold on the count, nor be merged away before it is looked for.
+ *
+ * True when temperature passed the gate with a wide swing; the four arcs are
+ * each long enough to be seasons; they run in thermal order — coldest opposite
+ * warmest, and the two between them less extreme than either; and temperature
+ * is among the axes separating them most.
  *
  * Temperature need not *lead* outright: dew point and vegetation both track it
  * closely in a humid continental climate and either can edge it out, which does
  * not make the year any less a four-season thermal one.
  */
-function isThermalQuartet(segments, axes, tempAxis) {
-  if (!tempAxis || segments.length !== 4) return false;
-  if (tempAxis.value < QUARTET_MIN_SWING_F) return false;
-  const dominance = id => mean(segments.map(s => Math.abs(s.signature[id] ?? 0)));
+function isThermalQuartet(arcs, axes, tempAxis) {
+  if (!tempAxis || tempAxis.value < QUARTET_MIN_SWING_F || arcs.length !== 4) return false;
+  if (Math.min(...arcs.map(a => a.days)) < MIN_SEASON_DAYS) return false;
+
+  const t = arcs.map(a => a.signature.temp);
+  const coldest = t.indexOf(Math.min(...t)), warmest = t.indexOf(Math.max(...t));
+  if ((coldest - warmest + 4) % 4 !== 2) return false;
+  const extreme = Math.min(-t[coldest], t[warmest]);
+  if (t.some((v, i) => i !== coldest && i !== warmest && Math.abs(v) >= extreme)) return false;
+
+  const dominance = id => mean(arcs.map(a => Math.abs(a.signature[id] ?? 0)));
   const strongest = Math.max(...axes.map(ax => dominance(ax.id)));
   return dominance('temp') >= QUARTET_TEMP_SHARE * strongest;
 }
 
-// Order the four by where each sits on the temperature cycle: the coldest is
-// winter, the warmest summer, and the two between them are told apart by which
-// one is warming — the only thing that separates spring from autumn, since by
-// definition they share a temperature.
-const QUARTET_KEYS = { Winter: 'cold', Spring: 'green', Summer: 'hot', Autumn: 'bare' };
-
-function nameAsQuartet(segments) {
-  const warmth = segments.map(s => s.signature.temp);
-  const coldest = warmth.indexOf(Math.min(...warmth));
-  const warmest = warmth.indexOf(Math.max(...warmth));
-  return segments.map((seg, i) => {
-    let name;
-    if (i === coldest) name = 'Winter';
-    else if (i === warmest) name = 'Summer';
-    else name = (i - coldest + 4) % 4 < (i - warmest + 4) % 4 ? 'Spring' : 'Autumn';
-    return { ...seg, name, color: SEASON_COLORS[QUARTET_KEYS[name]] };
-  });
+/**
+ * Winter, Spring, Summer and Autumn as [start, end) day ranges, read off the
+ * smoothed temperature curve `T` alone.
+ *
+ * They are temperature names, so they take temperature dates. Taken from the
+ * multi-axis segmentation instead, lagging axes — snow cover, green-up, dew
+ * point — drag them weeks late, and the fit's own geometry makes the shoulders
+ * short: at this RATE_WEIGHT a pure sinusoid splits into seasons of roughly
+ * 113 and 70 days rather than into quarters.
+ */
+function quartetRanges(T) {
+  const lo = Math.min(...T), hi = Math.max(...T);
+  const band = QUARTET_EXTREME * (hi - lo);
+  // The unbroken run of days around `seed` for which `inside` holds, as [start, end).
+  const around = (seed, inside) => {
+    let s = seed, e = seed;
+    while (inside((s - 1 + N) % N) && (s - 1 + N) % N !== seed) s = (s - 1 + N) % N;
+    while (inside((e + 1) % N) && (e + 1) % N !== seed) e = (e + 1) % N;
+    return [s, (e + 1) % N];
+  };
+  const [winterStart, winterEnd] = around(T.indexOf(lo), d => T[d] <= lo + band);
+  const [summerStart, summerEnd] = around(T.indexOf(hi), d => T[d] >= hi - band);
+  return {
+    Winter: [winterStart, winterEnd], Spring: [winterEnd, summerStart],
+    Summer: [summerStart, summerEnd], Autumn: [summerEnd, winterStart],
+  };
 }
 
 /**
  * Seasons for `data`.
  *
  * @returns {{
- *   seasons: {startDOY:number, endDOY:number, days:number, name:string,
- *             color:string, signature:Object, means:Object}[],
+ *   seasons: {startDOY:number, endDOY:number, days:number, name:string, key:string,
+ *             color:string, signature:Object, means:Object, trend:Object}[],
  *   axes: {id:string, value:number, min:number, unit:string, passed:boolean}[],
  *   basis: string[],  note: string|null,
  * }}
@@ -369,96 +476,100 @@ export function computeSeasons(data) {
   const gated = gateAxes(data);
   const axes = gated.filter(ax => ax.passed);
   const report = gated.map(({ id, value, min, unit, passed }) => ({ id, value, min, unit, passed }));
+  const basis = axes.map(ax => ax.id);
+  const none = note => ({ seasons: [], axes: report, basis, note });
 
   if (!axes.length) {
-    return {
-      seasons: [], axes: report, basis: [],
-      note: gated.length
-        ? 'No axis of this location’s year varies enough to mark a season.'
-        : 'Not enough data loaded yet to derive seasons.',
-    };
+    return none(gated.length
+      ? 'No axis of this location’s year varies enough to mark a season.'
+      : 'Not enough data loaded yet to derive seasons.');
   }
 
-  // Smoothed, z-scored, weekly-binned — the representation the segmentation sees.
-  const smooth = axes.map(ax => gaussianSmooth(ax.series, 7, 14));
+  // Axes that just missed the gate get a profile too: they can help name a
+  // season, never define one.
+  const nameAxes = [...axes, ...gated.filter(ax => ax.nearMiss)];
+  const profiles = Object.fromEntries(nameAxes.map(ax => [ax.id, profile(ax)]));
+
+  // What the segmentation sees: each gated axis's level and rate, binned to weeks.
   const toWeeks = a => Array.from({ length: WEEKS }, (_, w) =>
     mean(a.slice(Math.round(w * N / WEEKS), Math.round((w + 1) * N / WEEKS))));
-  const levels = smooth.map(a => toWeeks(zscore(a)));
   // Rate of change, alongside level. Spring and autumn sit at the SAME
   // temperature — level alone cannot tell them apart, which is why a clustering
   // on levels gives a four-season continental climate only two seasons. The
   // direction of travel is the one thing that separates them. It is down-
   // weighted because it is a supporting signal: at full weight it starts
   // splitting the flanks of a single long season in two.
-  const rate = smooth.map(a => {
-    const d = a.map((_, i) => a[(i + 7) % N] - a[(i - 7 + N) % N]);
-    return toWeeks(zscore(d)).map(v => v * RATE_WEIGHT);
-  });
-  const features = [...levels, ...rate];
+  const features = [
+    ...axes.map(ax => toWeeks(profiles[ax.id].level)),
+    ...axes.map(ax => toWeeks(profiles[ax.id].rate).map(v => v * RATE_WEIGHT)),
+  ];
   const totalVar = features.reduce((s, f) => s + f.reduce((t, v) => t + (v - mean(f)) ** 2, 0), 0);
 
-  if (!(totalVar > 0)) {
-    return { seasons: [], axes: report, basis: axes.map(a => a.id), note: 'This location’s year is flat on every axis.' };
-  }
+  if (!(totalVar > 0)) return none('This location’s year is flat on every axis.');
 
-  const { count, fit } = chooseCount(features, totalVar);
-  if (count < 2 || !fit) {
-    return {
-      seasons: [], axes: report, basis: axes.map(a => a.id),
-      note: 'This location’s year runs as one continuous season.',
-    };
-  }
+  const table = segmentAll(features, MAX_SEASONS);
 
-  // Per-day z-scores, so a segment's signature is measured over its real span
-  // rather than over the weekly bins the boundaries were found in.
-  const dailyZ = {}, dailyRaw = {};
-  axes.forEach((ax, i) => { dailyZ[ax.id] = zscore(smooth[i]); dailyRaw[ax.id] = smooth[i]; });
-
-  /** Everything that can be said about the span from `start` to `end`. */
+  /**
+   * Everything that can be said about the span from `start` to `end`, measured
+   * per day rather than over the weekly bins the boundaries were found in.
+   */
   const describe = (start, end) => {
     const days = [];
     for (let d = start; d !== end; d = (d + 1) % N) days.push(d);
-    const signature = {}, means = {};
-    axes.forEach(ax => {
-      signature[ax.id] = mean(days.map(d => dailyZ[ax.id][d]));
-      means[ax.id]     = mean(days.map(d => dailyRaw[ax.id][d]));
+    const signature = {}, means = {}, trend = {};
+    nameAxes.forEach(ax => {
+      const p = profiles[ax.id];
+      signature[ax.id] = mean(days.map(d => p.level[d]));
+      means[ax.id]     = mean(days.map(d => p.raw[d]));
+      trend[ax.id]     = mean(days.map(d => p.rate[d]));
     });
-    const { name, key } = nameFromSignature(signature, means, axes);
-    return { startDOY: start, endDOY: end, days: days.length, signature, means, name, key };
+    return { startDOY: start, endDOY: end, days: days.length, signature, means, trend,
+             ...nameFromSignature(signature, means, trend, nameAxes) };
   };
-
-  let segments = fit.bounds.map((start, i) => describe(start, fit.bounds[(i + 1) % fit.bounds.length]));
-
-  // Two neighbours the namer cannot tell apart are one season. The rate-of-
-  // change features are what make this necessary: they legitimately split
-  // spring from autumn, but they also split a single long wet season at the
-  // point where it stops deepening and starts easing — which is a real feature
-  // of the year and not a season boundary anyone would recognise. Only
-  // ADJACENT pairs merge, so a bimodal climate keeps its two separate wet
-  // seasons even though they share a name.
-  for (let guard = 0; guard < MAX_SEASONS && segments.length > 1; guard++) {
-    const i = segments.findIndex((seg, j) => seg.name === segments[(j + 1) % segments.length].name);
-    if (i < 0) break;
-    const next = segments[(i + 1) % segments.length];
-    const merged = describe(segments[i].startDOY, next.endDOY);
-    segments = segments.filter((_, j) => j !== i && j !== (i + 1) % segments.length);
-    segments.splice(i < segments.length ? i : segments.length, 0, merged);
-    segments.sort((a, b) => a.startDOY - b.startDOY);
-  }
-
-  if (segments.length < 2) {
-    return {
-      seasons: [], axes: report, basis: axes.map(a => a.id),
-      note: 'This location’s year runs as one continuous season.',
-    };
-  }
+  const arcsOf = fit => fit.bounds.map((start, i) => describe(start, fit.bounds[(i + 1) % fit.bounds.length]));
 
   const tempAxis = axes.find(ax => ax.id === 'temp');
-  const seasons = isThermalQuartet(segments, axes, tempAxis)
-    ? nameAsQuartet(segments)
-    : segments.map(seg => ({ ...seg, color: SEASON_COLORS[seg.key] ?? SEASON_COLORS.mild }));
+  if (table[4]?.bounds && isThermalQuartet(arcsOf(table[4]), axes, tempAxis)) {
+    const ranges = quartetRanges(profiles.temp.raw);
+    if (Object.values(ranges).every(([start, end]) => start !== end)) {
+      const seasons = Object.entries(ranges)
+        .map(([name, [start, end]]) => ({
+          ...describe(start, end), name, key: QUARTET_KEYS[name], color: SEASON_COLORS[QUARTET_KEYS[name]],
+        }))
+        .sort((a, b) => a.startDOY - b.startDOY);
+      return { seasons, axes: report, basis, note: null };
+    }
+  }
 
-  return { seasons, axes: report, basis: axes.map(a => a.id), note: null };
+  let k = chooseCount(table, totalVar);
+  if (k < 2) return none('This location’s year runs as one continuous season.');
+
+  // Two neighbours that are the same season — the namer cannot tell them apart,
+  // or their levels barely differ — are folded together. The rate-of-change
+  // features are what make this necessary: they legitimately split spring from
+  // autumn, but they also split a single long wet season at the point where it
+  // stops deepening and starts easing, which is a real feature of the year and
+  // not a season boundary anyone would recognise.
+  //
+  // The fold steps down to the best split with one fewer season rather than
+  // gluing the two arcs end to end, so every boundary stays the best one for the
+  // count that remains; a step that would leave a sliver shorter than
+  // MIN_SEASON_DAYS keeps stepping. Only ADJACENT arcs are compared, so a year
+  // with two separate wet seasons keeps both even though they share a name.
+  const distance = (a, b) => Math.sqrt(mean(axes.map(ax => (a.signature[ax.id] - b.signature[ax.id]) ** 2)));
+  let arcs = arcsOf(table[k]);
+  while (k > 2) {
+    const next = j => arcs[(j + 1) % arcs.length];
+    if (!arcs.some((a, j) => a.name === next(j).name || distance(a, next(j)) < MERGE_DISTANCE)) break;
+    do { k--; } while (k > 2 && shortestArc(table[k].bounds) < MIN_SEASON_DAYS);
+    arcs = arcsOf(table[k]);
+  }
+  if (k === 2 && (arcs[0].name === arcs[1].name || shortestArc(table[2].bounds) < MIN_SEASON_DAYS)) {
+    return none('This location’s year runs as one continuous season.');
+  }
+
+  const seasons = arcs.map(a => ({ ...a, color: SEASON_COLORS[a.key] ?? SEASON_COLORS.mild }));
+  return { seasons, axes: report, basis, note: null };
 }
 
 /** "Nov 6 – Mar 26" for one season. */

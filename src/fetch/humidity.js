@@ -13,15 +13,8 @@
 // other ring down with it. As its own optional stage — the pattern pm25.js and
 // visibility.js already follow — a failure here costs one ring and nothing else.
 
-// Returns 0-based DOY (0–364), skipping Feb 29. Returns null for Feb 29.
-function dateToDoy(dateStr) {
-  const [, m, d] = dateStr.split('-').map(Number);
-  if (m === 2 && d === 29) return null;
-  const dim = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  let doy = d - 1;
-  for (let i = 1; i < m; i++) doy += dim[i];
-  return doy;
-}
+// DOY 0 is the winter solstice; Feb 29 has no slot and is skipped (null).
+import { dateToDOY } from '../data/calendar.js';
 
 /** °C → °F, rounded to a tenth. */
 export const cToF = c => Math.round((c * 9 / 5 + 32) * 10) / 10;
@@ -60,7 +53,7 @@ export async function fetchDewpoint(lat, lon) {
   const doySums = new Array(365).fill(0);
   const doyCnts = new Array(365).fill(0);
   Object.keys(daySums).forEach(dateStr => {
-    const doy = dateToDoy(dateStr);
+    const doy = dateToDOY(dateStr);
     if (doy === null) return;
     doySums[doy] += daySums[dateStr] / dayCnts[dateStr];
     doyCnts[doy]++;

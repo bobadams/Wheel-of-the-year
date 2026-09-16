@@ -1,5 +1,6 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { catmullRomPath } from '../draw/canvas.js';
+import { MON_S, monthSpans } from '../data/calendar.js';
 import {
   canvas, ringState, smoothedData, currentData,
   actuals, displayState, todayDOY,
@@ -7,8 +8,6 @@ import {
 
 const CHART_W = 720, CHART_H = 280;
 const PAD = { t: 24, r: 20, b: 36, l: 56 };
-const DIM  = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-const MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function niceStep(range, n) {
   const rough = range / n;
@@ -85,27 +84,26 @@ function drawLineChart(canvasEl, ringDef, normalsData, color, actualsEntries) {
     ctx.fillText(label, PAD.l - 5, y + 3.5);
   }
 
-  // Month dividers + X-axis labels
-  let monthStart = 0;
+  // Month dividers + X-axis labels. The chart is the wheel unrolled from its
+  // top, so the axis opens on the winter solstice and December appears at both
+  // ends — its first twenty days close the axis and its last eleven open it.
   ctx.textAlign = 'center';
   ctx.font = '10px sans-serif';
   ctx.fillStyle = '#aaa';
-  for (let m = 0; m < 12; m++) {
-    const midIdx = monthStart + Math.floor(DIM[m] / 2);
-    if (monthStart > 0) {
+  for (const { month, start, end } of monthSpans()) {
+    if (start > 0) {
       ctx.save();
       ctx.strokeStyle = '#d8d0c4';
       ctx.lineWidth = 0.5;
       ctx.setLineDash([0, 4]);
       ctx.beginPath();
-      ctx.moveTo(toX(monthStart), PAD.t);
-      ctx.lineTo(toX(monthStart), PAD.t + ph);
+      ctx.moveTo(toX(start), PAD.t);
+      ctx.lineTo(toX(start), PAD.t + ph);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
     }
-    ctx.fillText(MONS[m], toX(midIdx), PAD.t + ph + 22);
-    monthStart += DIM[m];
+    if (end - start >= 10) ctx.fillText(MON_S[month], toX((start + end - 1) / 2), PAD.t + ph + 22);
   }
 
   // Today marker
@@ -154,9 +152,10 @@ function drawLineChart(canvasEl, ringDef, normalsData, color, actualsEntries) {
 
   // Actuals overlay
   if (actualsEntries) {
-    // Deduplicate by DOY — keep the most recent reading for each calendar day.
-    // Data spans ~350 days crossing the year boundary, so DOY 0–todayDOY comes
-    // from this year and DOY (todayDOY+1)–364 comes from last year.
+    // Deduplicate by DOY — keep the most recent reading for each day of the
+    // year. Data spans ~350 days, so DOY 0–todayDOY comes from the current turn
+    // of the wheel (since the last winter solstice) and DOY (todayDOY+1)–364
+    // from the one before.
     const dedupMap = new Map();
     actualsEntries
       .filter(e => e.doy >= 0 && e.doy <= 364)

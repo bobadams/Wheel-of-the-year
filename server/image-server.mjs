@@ -34,7 +34,7 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { readClimateRecord, writeClimateRecord } from './climate-cache.mjs';
+import { readClimateRecord, writeClimateRecord, DOY_ZERO } from './climate-cache.mjs';
 import { llmText, llmProvider } from './llm.mjs';
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
@@ -462,7 +462,9 @@ const server = http.createServer(async (req, res) => {
     try {
       if (req.method === 'GET') {
         const rec = await readClimateRecord(sanitizeKey(url.searchParams.get('key')), { cacheDir: CACHE_DIR });
-        if (!rec) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'not cached' })); return; }
+        // A miss still states the day numbering, so the client knows it may
+        // store normals here (see "Day numbering" in climate-cache.mjs).
+        if (!rec) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'not cached', doy0: DOY_ZERO })); return; }
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
         res.end(JSON.stringify(rec));
         return;
@@ -473,7 +475,7 @@ const server = http.createServer(async (req, res) => {
         const patch = JSON.parse(await readBody(req, 8e6) || '{}');
         const summary = await writeClimateRecord(sanitizeKey(patch.key), patch, { cacheDir: CACHE_DIR });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(summary));
+        res.end(JSON.stringify({ ...summary, doy0: DOY_ZERO }));
         return;
       }
     } catch (e) {

@@ -1,5 +1,6 @@
 import { fetchPixelGrid, fetchAnnualSeries, cellLatLon } from '../fetch/evi.js';
 import { currentData } from '../state.js';
+import { MON_S, monthSpans } from '../data/calendar.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const SCREEN_KM    = 10;
@@ -217,7 +218,7 @@ function drawTimeSeries(canvas, eviArray) {
     return;
   }
 
-  // x: 0-based DOY 0–364, y: EVI 0–1
+  // x: DOY 0–364 (0 = winter solstice, as on the wheel), y: EVI 0–1
   const toX = i => PAD.l + i / 364 * pw;
   const toY = v => PAD.t + (1 - Math.max(0, Math.min(1, v))) * ph;
 
@@ -230,18 +231,18 @@ function drawTimeSeries(canvas, eviArray) {
     ctx.fillText(v.toFixed(1), PAD.l - 5, y + 3.5);
   });
 
-  // ── Month dividers + labels (0-based DOY starts) ──
-  const MONTH_STARTS = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-  const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  // ── Month dividers + labels — unrolled from the top of the wheel, so
+  // December opens and closes the axis ──
   ctx.font = '10px sans-serif'; ctx.fillStyle = '#aaa'; ctx.textAlign = 'center';
-  MONTH_STARTS.forEach((doy, i) => {
-    const x     = toX(doy);
-    const nextX = toX(MONTH_STARTS[i + 1] ?? 365);
-    ctx.strokeStyle = '#d8d0c4'; ctx.lineWidth = 0.5;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + ph); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillText(MONTH_LABELS[i], (x + nextX) / 2, PAD.t + ph + 14);
+  monthSpans().forEach(({ month, start, end }) => {
+    const x = toX(start);
+    if (start > 0) {
+      ctx.strokeStyle = '#d8d0c4'; ctx.lineWidth = 0.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + ph); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (end - start >= 10) ctx.fillText(MON_S[month], (x + toX(end)) / 2, PAD.t + ph + 14);
   });
 
   // ── Area fill ──

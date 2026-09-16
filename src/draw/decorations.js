@@ -1,29 +1,32 @@
 import { canvas, currentData, todayDOY } from '../state.js';
 import { doy2angle, polar, drawArcText, arcTextSpan } from './canvas.js';
 import { INK, R, hairline, haloText, drawTracked } from './theme.js';
-import { yearSummary, coordLabel, doyLabel } from '../data/summary.js';
+import { yearSummary, coordLabel } from '../data/summary.js';
+import { DIM, MON_S, MON_L, MONTH_START, dateToDOY, monthDayToDOY, doyLabel } from '../data/calendar.js';
 
-export const DIM     = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-export const MON_S   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-export const MON_L   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-
-/** First 0-indexed DOY of each month. */
-const MONTH_START = DIM.reduce((acc, n) => (acc.push(acc[acc.length - 1] + n), acc), [0]).slice(0, 12);
-
+/**
+ * Mean new and full moons in calendar `year`, as DOYs.
+ *
+ * Each phase is dated by its UTC calendar day and placed through the calendar
+ * like every other marker. Counting days from Jan 1 instead runs one day long
+ * after Feb 29, which put every moon from March on a day late in a leap year.
+ */
 function computeMoonPhases(year) {
   const SYNODIC = 29.530588853;
   const msPerDay = 86400000;
   const j2000 = Date.UTC(2000, 0, 1, 12, 0, 0);
-  const startJD = 2451545.0 + (Date.UTC(year, 0, 1) - j2000) / msPerDay;
-  const endJD   = 2451545.0 + (Date.UTC(year + 1, 0, 1) - j2000) / msPerDay;
+  const toJD  = ms => 2451545.0 + (ms - j2000) / msPerDay;
+  const toDOY = jd => dateToDOY(new Date(j2000 + (jd - 2451545.0) * msPerDay).toISOString().slice(0, 10), { leapDay: 'mar1' });
+  const startJD = toJD(Date.UTC(year, 0, 1));
+  const endJD   = toJD(Date.UTC(year + 1, 0, 1));
   const refJD = 2451550.09765; // Meeus k=0 mean new moon (Jan 6, 2000 14:21 UTC)
   const kStart = Math.floor((startJD - refJD) / SYNODIC) - 1;
   const newMoons = [], fullMoons = [];
   for (let k = kStart; k <= kStart + 15; k++) {
     const newJD  = refJD + k * SYNODIC;
     const fullJD = refJD + (k + 0.5) * SYNODIC;
-    if (newJD  >= startJD && newJD  < endJD) newMoons.push( Math.floor(newJD  - startJD));
-    if (fullJD >= startJD && fullJD < endJD) fullMoons.push(Math.floor(fullJD - startJD));
+    if (newJD  >= startJD && newJD  < endJD) newMoons.push(toDOY(newJD));
+    if (fullJD >= startJD && fullJD < endJD) fullMoons.push(toDOY(fullJD));
   }
   return { newMoons, fullMoons };
 }
@@ -132,14 +135,17 @@ export function drawTicks() {
   ctx.restore();
 }
 
-// The cardinal days of the solar year. Offsets use the same +0.5 midday
-// convention as the rings, so the cross is exactly two diameters and the winter
-// endpoint lands on the top of the wheel defined by SOLSTICE_OFFSET.
+// The cardinal days of the solar year, each on the middle of the day it is
+// named for — the same +0.5 as every other day marker, so the winter solstice
+// (DOY 0) points straight up. They are deliberately NOT a perfect cross. The
+// Earth's orbit is eccentric: Sep 22 → Mar 20 is 179 days and Mar 20 → Sep 22
+// is 186. Spaced evenly as two diameters, the axes sat up to two and a quarter
+// days away from the dates they are labelled with.
 const CARDINALS = [
-  { doy: 353.5, label: 'Winter Solstice', date: 'Dec 21' },
-  { doy:  79.75, label: 'Spring Equinox', date: 'Mar 20' },
-  { doy: 171.0, label: 'Summer Solstice', date: 'Jun 21' },
-  { doy: 262.25, label: 'Autumn Equinox', date: 'Sep 22' },
+  { doy: monthDayToDOY(12, 21) + 0.5, label: 'Winter Solstice' },
+  { doy: monthDayToDOY(3, 20) + 0.5,  label: 'Spring Equinox' },
+  { doy: monthDayToDOY(6, 21) + 0.5,  label: 'Summer Solstice' },
+  { doy: monthDayToDOY(9, 22) + 0.5,  label: 'Autumn Equinox' },
 ];
 
 /**

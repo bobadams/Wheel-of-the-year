@@ -31,17 +31,44 @@
 // Records are written atomically (tmp file + rename) behind a per-key promise
 // chain, so the several patches a single page load sends can't clobber each
 // other.
+//
+// Day numbering. A normals array is indexed by DOY, and DOY 0 is the WINTER
+// SOLSTICE (Dec 21) — the day at the top of the wheel (src/data/calendar.js).
+// Version 1 records counted from Jan 1 instead. They are migrated as they are
+// read: each normals array is rotated so Dec 21 lands at index 0, and the next
+// write persists the result as version 2. Nothing else in a record is indexed
+// by day — actuals and baseline are keyed by date — so nothing else moves.
+//
+// Two guards keep an old bundle and this service from mixing the two layouts
+// while a deploy is in progress, when one side has been updated and the other
+// has not yet:
+//   - every response states the layout (`doy0`), and the client ignores normals
+//     from a service that does not say `winter-solstice`, so it never draws
+//     Jan-1 arrays as solstice ones or sends solstice arrays to an old store;
+//   - a POST whose normals are not marked `doy0: 'winter-solstice'` has its
+//     365-point arrays dropped, so a page still running the old bundle cannot
+//     write Jan-1 arrays into a migrated record.
+// Either way round, the worst case is a cache miss and a refetch, never a
+// record that is silently eleven days out.
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-const VERSION = 1;
+const VERSION = 2;
+
+// What DOY 0 means in this store. Sent with every response, required on every
+// normals write.
+export const DOY_ZERO = 'winter-solstice';
+
+// Dec 21 counted from Jan 1 — the rotation that turns a version 1 array into a
+// version 2 one.
+const V1_SOLSTICE_INDEX = 354;
 
 // Keep a comfortable margin over the year the wheel displays, so a location
 // revisited after a long gap still has a full trailing year on hand.
 const RETAIN_DAYS = 420;
 
-// 365-point normals arrays (index = day-of-year, 0-based, Feb 29 excluded).
+// 365-point normals arrays (index = DOY, 0 = the winter solstice, Feb 29 excluded).
 const NORMAL_SERIES = [
   'temp', 'rain', 'daylight', 'wind', 'windDir', 'snow', 'cloud',
   'evi', 'pm25', 'visibility', 'dewpoint',
@@ -129,11 +156,28 @@ function withLock(key, fn) {
 export async function readClimateRecord(key, { cacheDir }) {
   try {
     const rec = JSON.parse(await fs.readFile(recordPath(cacheDir, key), 'utf8'));
+    if (rec?.v === 1) return migrateV1(rec);
     if (!rec || rec.v !== VERSION) return null;
-    return rec;
+    return { ...rec, doy0: DOY_ZERO };
   } catch {
     return null;
   }
+}
+
+/**
+ * A version 1 record (normals counted from Jan 1) as a version 2 one (counted
+ * from the winter solstice). Pure — the file itself is rewritten by the next
+ * POST, which reads through here.
+ */
+function migrateV1(rec) {
+  const normals = { ...(rec.normals ?? {}) };
+  for (const k of NORMAL_SERIES) {
+    const arr = normals[k];
+    if (Array.isArray(arr) && arr.length === 365) {
+      normals[k] = arr.map((_, doy) => arr[(doy + V1_SOLSTICE_INDEX) % 365]);
+    }
+  }
+  return { ...rec, v: VERSION, doy0: DOY_ZERO, normals };
 }
 
 // ── Write ────────────────────────────────────────────────────────────────────
@@ -158,6 +202,7 @@ export async function writeClimateRecord(key, patch, { cacheDir }) {
 
     const rec = {
       v: VERSION,
+      doy0: DOY_ZERO,
       key,
       name: typeof patch?.name === 'string' ? patch.name : prev.name ?? '',
       lat: isNum(patch?.lat) ? patch.lat : prev.lat ?? null,
@@ -168,9 +213,12 @@ export async function writeClimateRecord(key, patch, { cacheDir }) {
       updated: new Date().toISOString(),
     };
 
-    // Normals — field-by-field replace.
+    // Normals — field-by-field replace. The 365-point arrays are accepted only
+    // from a client that says it numbers days the way this store does (see
+    // "Day numbering" at the top); scalars and meta carry no day index.
     const pn = patch?.normals ?? {};
-    for (const k of NORMAL_SERIES) {
+    const sameLayout = patch?.doy0 === DOY_ZERO;
+    for (const k of sameLayout ? NORMAL_SERIES : []) {
       const series = cleanSeries(pn[k]);
       if (series) rec.normals[k] = series;
     }

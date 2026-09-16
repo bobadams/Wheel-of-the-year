@@ -25,7 +25,9 @@ No backend, no database, no runtime dependencies.
 ├── vite.config.js                # Minimal Vite config, output → dist/
 ├── package.json                  # Scripts and devDependencies (vite only)
 ├── scripts/
-│   └── generate-preset-oakland.js  # Regenerates Oakland preset from live APIs
+│   ├── generate-preset-oakland.js  # Regenerates Oakland preset from live APIs
+│   ├── seasons-report.mjs        # Seasons for reference climates vs. the committed baseline
+│   └── fixtures/                 # season-climates.json (normals) + seasons-report.txt (baseline)
 ├── server/
 │   ├── image-server.mjs          # Node service on :7871 — routes /generate, /climate
 │   ├── llm.mjs                   # LLM provider switch: Anthropic (default) or Ollama
@@ -36,6 +38,7 @@ No backend, no database, no runtime dependencies.
     ├── styles.css                # All styling (CSS custom properties, responsive)
     ├── data/
     │   ├── ringDefs.js           # 11 ring definitions (colors, units, scale ranges, provenance)
+    │   ├── calendar.js           # The one date ↔ DOY conversion (DOY 0 = Dec 21, the winter solstice)
     │   ├── seasons.js            # Climatological seasons derived from this location's own normals
     │   ├── presets.js            # Built-in Oakland, CA preset (365-point arrays)
     │   ├── summary.js            # The year in a few figures — feeds the cartouche and the key
@@ -76,6 +79,7 @@ npm run dev           # Vite dev server with hot reload
 npm run build         # Production build → dist/
 npm run preview       # Preview production build locally
 npm run generate-presets  # Regenerate Oakland preset from live APIs (Node.js)
+npm run seasons-report    # What a change to src/data/seasons.js moved (see "Seasons are derived")
 ```
 
 ### Regenerating preset data
@@ -286,7 +290,7 @@ a ring fill without a box around it. Anything drawn over the rings should use it
 its dates: a place may have a wet and a dry season, a fog season, four thermal
 ones, or none, and the module finds the structure first and names it after.
 
-Three stages, and **the order is the design**:
+Four stages, and **the order is the design**:
 
 1. **Gate, in absolute units.** Which axes carry a real annual cycle — a ≥9 °F
    temperature spread, a Walsh & Lawler rainfall seasonality index ≥0.40, ≥0.08
@@ -298,39 +302,103 @@ Three stages, and **the order is the design**:
    place, not a failed fetch — the legend, the panel and the poster key each say
    so in words.
 2. **Segment**, by exact dynamic programming over the circular year on the
-   surviving axes. Boundaries *and* the number of seasons both fall out of the
-   data. Unlike k-means it cannot hit a local minimum or answer differently twice.
-3. **Name**, from each arc's own signature.
+   surviving axes — one pass gives the best split for every count from one to
+   five. Unlike k-means it cannot hit a local minimum or answer differently twice.
+3. **The quartet**, tested on the best four-arc split before anything is counted
+   or merged (see below).
+4. **Count, name and merge.** `chooseCount` picks the number of seasons, each arc
+   is named from its own signature, and neighbours that are one season are
+   folded together.
 
-Four things in there are load-bearing and easy to undo:
+The things in there that are load-bearing and easy to undo:
 
+- **The gate measures the smoothed series.** A 30-year daily normal still carries
+  day-to-day noise, and for cloud cover the noise alone is as wide as the
+  threshold — measured raw, the gate passed exactly what it exists to reject.
+  Rain's index is the exception: it works on monthly totals, which average the
+  noise out already.
 - **Rate of change is a feature, at reduced weight.** Spring and autumn sit at
   the same temperature; level alone cannot separate them, which is why a
   level-only clustering gives a four-season continental climate only two
   seasons. At full weight the rate term instead splits single long seasons along
   their own flanks, so it is damped (`RATE_WEIGHT`).
-- **Adjacent seasons with the same name are merged.** This is the counterweight
-  to the rate features: they legitimately split spring from autumn, but they also
-  split one long wet season at the point where it stops deepening. Only
-  *adjacent* pairs merge, so a bimodal equatorial year keeps both of its separate
-  wet seasons even though they share a name.
-- **Temperature words come from the absolute mean, not the z-score.** A z-score
-  is relative to the location's own year, so Darwin's coolest season — 86 °F —
-  came out "cold", which is true of the statistic and false of the place. The
-  z-score still decides *whether* an axis is mentioned; only the word is absolute.
-  Rain is the deliberate exception: a desert's wet season really is its wet
-  season, and that is how people speak.
+- **Rain and snow are square-rooted before they are z-scored.** Both sit near
+  zero for months and then peak; on the raw values the peak holds nearly all the
+  variance, and the segmentation spends its seasons carving up the wet season
+  while lumping the rest of the year together (a second, shorter rainy season
+  disappears into a "Mild season"). `means` stay in real units.
+- **Neighbours that are one season are merged by refitting, not by gluing.** This
+  is the counterweight to the rate features: they legitimately split spring from
+  autumn, but they also split one long wet season at the point where it stops
+  deepening. Adjacent arcs that share a name, or whose level signatures differ by
+  less than `MERGE_DISTANCE`, send the fit down to the best split with one fewer
+  season — so the boundaries stay the best ones for the count that remains. Only
+  *adjacent* arcs are compared, so a year with two separate wet seasons keeps
+  both even though they share a name.
+- **A word comes from the absolute value; its side comes from the z-score.** A
+  z-score is relative to the location's own year, so Darwin's coolest season —
+  86 °F — came out "cold", which is true of the statistic and false of the place.
+  But the direction must still agree: Timbuktu's coolest season averages 85 °F
+  highs and was once named "hot". A season below its year's mean can only be
+  cool, cold or frozen, one above it only warm or hot; dew point follows the same
+  rule. Rain is the deliberate exception: a desert's wet season really is its wet
+  season, and that is how people speak. `temp` is the mean daily **high**, and
+  the word thresholds are set against highs.
+- **An axis that just misses its gate can name a season, never define one.** At
+  `NEAR_MISS` (75 %) of its threshold it joins the namer's vocabulary, so a place
+  whose rain index falls just short still has its wet and dry seasons called that.
+- **A shoulder is named for its direction of travel.** An arc with nothing
+  remarkable in its levels, where temperature is clearly moving, is a "Warming
+  season" or "Cooling season" — which keeps a mild spring and a mild autumn from
+  both being "Mild season".
 - **`daylight` is not a season axis.** It is astronomical, identical for every
   place at a given latitude, and including it would impose the same cycle
   everywhere — precisely the arbitrary calendar this module exists to avoid.
 
-Winter/Spring/Summer/Autumn are used **only** when the data shows that year: four
-seasons, a temperature swing ≥25 °F, and temperature among the axes separating
-them most. The dates are still derived. A place that does not have the quartet is
-never forced into it.
+Winter/Spring/Summer/Autumn are used **only** when the data shows that year. On
+the best four-arc split: a smoothed temperature swing ≥25 °F, every arc ≥30 days,
+the coldest arc opposite the warmest with the other two less extreme than either,
+and temperature among the axes separating them most. A place that does not have
+the quartet is never forced into it. Two things about it are easy to undo:
+
+- **It is tested first, on the four-arc split, whatever the count.** Tested after
+  the name merge, three neighbouring "Mild season" arcs were folded into one and
+  London lost its quartet before the check ever ran. Tied to `chooseCount`'s
+  number, the quartet appeared and vanished with small moves of the constants.
+- **Its dates come from temperature alone.** They are temperature names. Winter is
+  the unbroken run of days within `QUARTET_EXTREME` (14.6 %) of the annual range
+  from the coldest day, summer likewise from the warmest, and spring and autumn
+  fill the gaps between. That fraction is the one at which a pure sinusoid falls
+  into four 91-day quarters; an uneven curve moves the dates. Taken from the
+  multi-axis segmentation instead, lagging axes (snow, green-up, dew point)
+  dragged the dates weeks late and the fit's geometry made every spring and
+  autumn short — Seoul's winter ran Oct 23 – Apr 1.
+
+### Checking a change: `npm run seasons-report`
+
+The constants in `seasons.js` are tuned, and several sit close to the point where
+a season appears or vanishes, so a small move quietly changes real places. There
+is no test suite; this is the check. `scripts/seasons-report.mjs` runs
+`computeSeasons` over `scripts/fixtures/season-climates.json` — 30-year ERA5
+normals for a spread of climates, plus records copied from the location cache —
+and over the bundled presets, then compares every location with the committed
+baseline `scripts/fixtures/seasons-report.txt`.
+
+```bash
+npm run seasons-report               # what changed since the baseline (exits 1 if anything did)
+npm run seasons-report -- --print    # the full report
+npm run seasons-report -- --update   # accept the current output as the new baseline
+```
+
+A difference is not a verdict: it is the list of places a change moved, to be read
+and judged, then accepted with `--update` and committed with the change. **Expected
+outcomes belong in that baseline, not in comments.** A comment asserting one goes
+stale without anyone noticing — the `MIN_GAIN` comment once promised that "a
+Mediterranean year resolves to three", which was true only of the bundled Oakland
+preset's three axes and false of a live Oakland visit.
 
 Seasons are recomputed in `state.js` alongside `smoothedData` on every data
-change (~7 ms), so each stage of a load sharpens them and the band can never
+change (a few ms), so each stage of a load sharpens them and the band can never
 disagree with the rings it came from. There is nothing to cache and no separate
 refresh path — but note that `refreshSourceBadges()` is what re-renders the
 seasons panel and the legend, so a new load stage must keep calling it.
@@ -377,9 +445,31 @@ Four things about it are load-bearing:
 ## Key Conventions
 
 ### Day-of-Year (DOY)
-- DOY is **0-indexed, 0–364** (365-day year, Feb 29 excluded)
-- All data arrays are length 365
-- `doy2angle(doy)` maps DOY to radians, with DOY 0 at the **winter solstice** (top of wheel)
+- **DOY 0 is the winter solstice, Dec 21** — the day at the top of the wheel. The
+  year runs clockwise: Dec 31 = 10, **Jan 1 = 11**, Mar 20 = 89, Jun 21 = 182,
+  Sep 22 = 275, Dec 20 = 364. It is a 365-day year; Feb 29 has no slot.
+- All data arrays are length 365 and indexed this way — fetched normals, the
+  bundled preset, the server's stored records, the seasons fixtures.
+- **`src/data/calendar.js` is the only place a date becomes a DOY or a DOY a
+  date** (`dateToDOY`, `monthDayToDOY`, `doyLabel`, `doyMonth`, `MONTH_START`,
+  `monthSpans`). Never write month arithmetic anywhere else: every module used to
+  carry its own copy counting from Jan 1, with the solstice put on top by rotating
+  the drawing, and independent copies are how two displays drift apart silently.
+- Feb 29: a normal skips it (`dateToDOY` → `null`); a single observation or event
+  folds onto Mar 1 with `{ leapDay: 'mar1' }` (`observedDOY` in `fetch/actuals.js`).
+- Outside conventions still count from Jan 1 — the solar declination formula and
+  MODIS composite keys (`A2022145`). Convert with `doyToJan1` at that boundary only.
+- `doy2angle(doy)` maps DOY to radians with the **middle** of DOY 0 at the top. A
+  day's arc runs `doy2angle(d)`…`doy2angle(d + 1)`, and every whole-day marker
+  (holidays, moons, extremes, today, the solstice/equinox axes) sits at `d + 0.5`.
+  `angle2doy` is the inverse; `Math.floor` of it is the day under an angle.
+- The solstice/equinox axes sit on their labelled dates, so they are **not** a
+  perfect cross — Sep 22 → Mar 20 is 179 days, Mar 20 → Sep 22 is 186.
+- Anything that scans a 365-point array for a run of equal values must scan
+  **circularly**: the shortest day's plateau straddles DOY 364 → 0 (see
+  `plateauMid` in `draw/labels.js`).
+- Linear charts (`ui/ringChart.js`, the EVI panel) are the wheel unrolled from the
+  top, so their axis opens on Dec 21 and December appears at both ends.
 
 ### Canvas coordinate system
 - Origin at canvas center `(cx, cy)`
@@ -753,6 +843,21 @@ off. `actualsForDisplay()` converts back to the `{ doy, value }` arrays the
 drawing code wants, keeping the trailing 365 days with the newest observation
 winning each DOY slot.
 
+**Day numbering: records are version 2.** A stored normals array is indexed by
+DOY with 0 = the winter solstice. Version 1 records counted from Jan 1; the
+service migrates them as it reads them (each array rotated so Dec 21 lands at
+index 0) and the next write persists version 2. Only the 365-point normals move —
+actuals and baseline are date-keyed. Because the front end and the image service
+are deployed separately, two guards stop the layouts mixing mid-deploy:
+every response carries `doy0: 'winter-solstice'`, and the client neither uses
+stored normals nor sends its own (nor the EVI baseline, which belongs to the
+sample pixel recorded among them) until a response has said so; and the service
+drops 365-point arrays from any POST not marked `doy0: 'winter-solstice'`, so a
+page still running an old bundle cannot write Jan-1 arrays into a migrated
+record. Deploy the two in either order — the worst case in between is a cache
+miss, never a record that is silently eleven days out. `DOY_ZERO` is defined in
+both `server/climate-cache.mjs` and `src/data/locationCache.js`; keep them equal.
+
 **Repairing interrupted visits.** Presence is tested field by field against
 `currentData`, and each stage POSTs its own patch the moment it lands, rather
 than one write at the end. So a visit abandoned mid-EVI still leaves its normals
@@ -876,6 +981,8 @@ There is no test suite. The project has no test runner, no test files, and no CI
 - Test visually in the browser with `npm run dev`
 - Verify both the Oakland preset (`loadPreset`) and a live city fetch (`fetchCity`) render correctly
 - Check mobile layout at `<820px` viewport width
+- After touching `src/data/seasons.js`, run `npm run seasons-report` — the one
+  scripted check in the repo — and read every location it says moved
 - Export the wheel SVG and open it — **the export is a second renderer**, and
   several bugs (the dash leak, the missing viewBox, collapsed letterspacing) show
   up only there, never on the canvas
@@ -885,7 +992,7 @@ There is no test suite. The project has no test runner, no test files, and no CI
 
 ## Common Pitfalls
 
-- **DOY vs month index**: DOY is 0-indexed and 0 = winter solstice day; don't confuse with calendar month arrays
+- **DOY vs month index**: DOY 0 is Dec 21, not Jan 1 — Jan 1 is DOY 11. Convert through `src/data/calendar.js`, never by summing month lengths in place
 - **Feb 29**: All code skips leap-day; ensure any new date-math is consistent
 - **MODIS latency**: Fetching NDVI for a *new* city takes 30–60 seconds due to 16-day batch requests; do not assume it's fast. A city already in the location cache skips it.
 - **Actuals are date-keyed, not DOY-keyed**: the cache stores `'YYYY-MM-DD' → value`. Collapsing to DOY before storage destroys the information the incremental top-up needs. Convert to DOY only at draw time (`actualsForDisplay`).
@@ -897,11 +1004,12 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Task | Files to touch |
 |------|---------------|
 | Add a new data ring | `ringDefs.js`, `controls.js` (legend), `fetch/climate.js` or new fetch module, `state.js` |
-| Change how seasons are found, counted or named | `src/data/seasons.js` (`SEASON_AXES` gates and vocabulary, `MIN_GAIN`, `RATE_WEIGHT`, `nameFromSignature`) |
+| Change how seasons are found, counted or named | `src/data/seasons.js` (`SEASON_AXES` gates and vocabulary, `MIN_GAIN`, `RATE_WEIGHT`, `MERGE_DISTANCE`, `NEAR_MISS`, `QUARTET_*`, `nameFromSignature`) — then `npm run seasons-report` |
 | Change how the seasons band looks | `src/draw/seasons.js` |
 | Add an optional normal (its own API) | new module in `src/fetch/`, a stage in `loadLocation()`, `NORMAL_SERIES`/`ACTUAL_SERIES` in **both** `locationCache.js` and `climate-cache.mjs` |
 | Change color scheme | `styles.css` (custom properties) and `ringDefs.js` (default colors) |
-| Add a new decoration | `draw/decorations.js`, then call it from `paintWheel()` in `draw/wheel.js` |
+| Add a new decoration | `draw/decorations.js`, then call it from `paintWheel()` in `draw/wheel.js` — place anything dated through `src/data/calendar.js` |
+| Change how dates map onto the wheel | `src/data/calendar.js` only; if stored arrays must move, bump `VERSION` and migrate in `server/climate-cache.mjs`, and rotate `src/data/presets.js` and `scripts/fixtures/season-climates.json` |
 | Move a ring or annotation band | `R` in `draw/theme.js` — check its neighbours in the same table |
 | Change the ring palette or ink | `draw/ringDefs.js` (rings) and `INK` in `draw/theme.js` (everything else) |
 | Change the poster layout, key, or stock sizes | `src/print/poster.js` (`paintPoster`, `keyBlocks`, `POSTER_SIZES`) |

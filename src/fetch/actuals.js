@@ -1,5 +1,6 @@
 import { fetchModisBatch } from './evi.js';
 import { cToF } from './humidity.js';
+import { dateToDOY, doyToJan1 } from '../data/calendar.js';
 
 // Longest window we ever ask an upstream API for — a little under a full year,
 // which is all the wheel can display at once.
@@ -10,13 +11,12 @@ const WINDOW_DAYS = 350;
 // overlap keeps the tail honest instead of freezing the first value seen.
 const OVERLAP_DAYS = 3;
 
-export function calendarDOY(dateStr) {
-  const [, mo, dy] = dateStr.split('-').map(Number);
-  const dim = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  let doy = 0;
-  for (let m = 0; m < mo - 1; m++) doy += dim[m];
-  return Math.min(doy + dy - 1, 364);
-}
+/**
+ * Where an observation dated `dateStr` sits on the wheel (DOY 0 = the winter
+ * solstice). Unlike a normal, a real observation on Feb 29 is kept: it shares
+ * Mar 1's slot, and the later reading wins it.
+ */
+export const observedDOY = dateStr => dateToDOY(dateStr, { leapDay: 'mar1' });
 
 const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -62,7 +62,7 @@ export async function fetchActuals(lat, lon, since) {
 
   const temp = [], rain = [], wind = [], snow = [], cloud = [];
   d.daily.time.forEach((date, i) => {
-    const doy = calendarDOY(date);
+    const doy = observedDOY(date);
     const tc = d.daily.temperature_2m_max[i];
     const p  = d.daily.precipitation_sum[i];
     const w  = d.daily.windspeed_10m_mean[i];
@@ -75,7 +75,7 @@ export async function fetchActuals(lat, lon, since) {
     if (cl != null) cloud.push({ date, doy, value: Math.round(cl * 10) / 10 });
   });
 
-  return { temp, rain, wind, snow, cloud, todayDOY: calendarDOY(todayDate()) };
+  return { temp, rain, wind, snow, cloud, todayDOY: observedDOY(todayDate()) };
 }
 
 /** Average an hourly series (timestamps 'YYYY-MM-DDTHH:MM') into daily entries. */
@@ -89,7 +89,7 @@ function hourlyToDaily(time, values, transform) {
     counts[date] = (counts[date] ?? 0) + 1;
   });
   return Object.entries(sums)
-    .map(([date, sum]) => ({ date, doy: calendarDOY(date), value: transform(sum / counts[date]) }))
+    .map(([date, sum]) => ({ date, doy: observedDOY(date), value: transform(sum / counts[date]) }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
@@ -145,7 +145,8 @@ export async function fetchRecentEVI(lat, lon, since) {
   // each date back to the composite it falls in.
   const allDates = [];
   for (let t = new Date(`${start}T00:00:00`); t <= endTime; t.setDate(t.getDate() + 16)) {
-    const doy16 = Math.floor(calendarDOY(fmt(t)) / 16) * 16 + 1;
+    // MODIS numbers composites by day since Jan 1, not by the wheel's DOY.
+    const doy16 = Math.floor(doyToJan1(observedDOY(fmt(t))) / 16) * 16 + 1;
     const key = `A${t.getFullYear()}${String(Math.min(doy16, 365)).padStart(3, '0')}`;
     if (!allDates.includes(key)) allDates.push(key);
   }
@@ -178,6 +179,6 @@ export async function fetchRecentEVI(lat, lon, since) {
   // Keep the calendar date; deduplication onto DOY happens once the series has
   // been merged with whatever was already cached (locationCache.actualsForDisplay).
   return results
-    .map(({ date, value }) => ({ date, doy: calendarDOY(date), value }))
+    .map(({ date, value }) => ({ date, doy: observedDOY(date), value }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }

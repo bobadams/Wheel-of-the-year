@@ -11,6 +11,7 @@
 import { canvas, displayState } from '../state.js';
 import { doy2angle, polar, uprightTangent } from './canvas.js';
 import { R, haloText } from './theme.js';
+import { monthDayToDOY } from '../data/calendar.js';
 
 const TRAD_STATE_KEY = {
   christian: 'holidayChristian',
@@ -21,20 +22,16 @@ const TRAD_STATE_KEY = {
 
 // ─── Calendar helpers ─────────────────────────────────────────────────────────
 
-// Month lengths for a non-leap 365-day year (DOY is 0-indexed, Feb 29 excluded)
-const DIM = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-/** Convert a Gregorian month (1-based) + day to a 0-indexed DOY (0–364). */
-function dateToDOY(month, day) {
-  let d = 0;
-  for (let m = 0; m < month - 1; m++) d += DIM[m];
-  // Clamp to 364 so dates in leap years never fall outside array bounds
-  return Math.min(d + day - 1, 364);
-}
+/**
+ * Convert a Gregorian month (1-based) + day to the wheel's DOY, through the one
+ * calendar every display shares (DOY 0 = the winter solstice). A feast that
+ * lands on Feb 29 shares Mar 1's slot.
+ */
+const dateToDOY = (month, day) => monthDayToDOY(month, day, { leapDay: 'mar1' });
 
 // ─── Easter (Anonymous Gregorian / Meeus algorithm) ──────────────────────────
 
-/** Returns the 0-indexed DOY of Easter Sunday for the given Gregorian year. */
+/** Returns the DOY of Easter Sunday for the given Gregorian year. */
 function easterDOY(year) {
   const a = year % 19;
   const b = Math.floor(year / 100);
@@ -143,7 +140,7 @@ function hebrewToJDN(hy, hm, hd) {
 }
 
 /**
- * Return the 0-indexed DOY in the given Gregorian year for a Hebrew date.
+ * Return the DOY in the given Gregorian year for a Hebrew date.
  * (hm/hd belong to the same Hebrew year that contains that Gregorian year's
  * spring or autumn, as controlled by the caller.)
  */
@@ -178,7 +175,7 @@ function islamicToJDN(iy, im, id) {
 }
 
 /**
- * Return the 0-indexed DOY for a Hijri date, or null if that date falls
+ * Return the DOY for a Hijri date, or null if that date falls
  * outside the target Gregorian year.
  */
 function islamicDOY(iy, im, id, gregYear) {
@@ -256,7 +253,7 @@ export function getHolidays(year) {
     }
   }
 
-  // Wrap any negative DOYs (e.g. Ash Wed in very early Easter years)
+  // Keep offsets from Easter within 0–364 (the wheel is a circle)
   return holidays.map(h => ({ ...h, doy: ((h.doy % 365) + 365) % 365 }));
 }
 

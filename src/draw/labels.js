@@ -2,7 +2,7 @@ import { RING_DEFS, RING_LABELS } from '../data/ringDefs.js';
 import { canvas, ringState, currentData, smoothedData } from '../state.js';
 import { doy2angle, polar, norm, uprightTangent } from './canvas.js';
 import { INK, R, hairline, haloText } from './theme.js';
-import { doyLabel } from '../data/summary.js';
+import { doyLabel } from '../data/calendar.js';
 
 /**
  * The extremes of each ring: where in the year it peaks and bottoms out.
@@ -39,11 +39,16 @@ export function drawMinMaxMarkers(layouts, normBounds) {
 
     let maxD = 0, minD = 0;
     refData.forEach((v, i) => { if (v > refData[maxD]) maxD = i; if (v < refData[minD]) minD = i; });
-    // Snap to the midpoint of any flat plateau so labels don't skew to its early edge.
+    // Snap to the midpoint of any flat plateau so labels don't skew to its early
+    // edge. The plateau is followed around the circle in both directions: DOY 0
+    // is the winter solstice, so the shortest day's plateau straddles the two
+    // ends of the array, and a forward-only scan put its label days late.
     const plateauMid = (first) => {
-      let end = first;
-      while (end + 1 < refData.length && refData[end + 1] === refData[first]) end++;
-      return Math.floor((first + end) / 2);
+      const n = refData.length, v = refData[first];
+      let back = 0, fwd = 0;
+      while (back < n - 1 && refData[(first - back - 1 + n) % n] === v) back++;
+      while (back + fwd < n - 1 && refData[(first + fwd + 1) % n] === v) fwd++;
+      return (first + Math.floor((fwd - back) / 2) + n) % n;
     };
     maxD = plateauMid(maxD);
     minD = plateauMid(minD);

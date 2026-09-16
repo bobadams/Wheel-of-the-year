@@ -1,3 +1,5 @@
+import { dateToDOY, doyToJan1 } from '../data/calendar.js';
+
 Math.radians = deg => deg * Math.PI / 180;
 
 export async function geocode(q) {
@@ -19,25 +21,17 @@ export async function fetchClimateAPI(lat, lon) {
   return r.json();
 }
 
+// Hours of daylight for each DOY. The declination formula counts days from
+// Jan 1 (d = 1…365), so each DOY is converted to that count first.
 export function daylightDaily(lat) {
   return Array.from({ length: 365 }, (_, i) => {
-    const d = i + 1;
+    const d = doyToJan1(i) + 1;
     const decl = 23.45 * Math.sin(Math.radians((360 / 365) * (d - 81)));
     const cosH = -Math.tan(lat * Math.PI / 180) * Math.tan(decl * Math.PI / 180);
     if (cosH <= -1) return 24;
     if (cosH >= 1)  return 0;
     return Math.round((2 / 15) * Math.acos(cosH) * 180 / Math.PI * 100) / 100;
   });
-}
-
-// Returns 0-based DOY (0–364), skipping Feb 29. Returns null for Feb 29.
-function dateToDoy(dateStr) {
-  const [, m, d] = dateStr.split('-').map(Number);
-  if (m === 2 && d === 29) return null;
-  const dim = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  let doy = d - 1;
-  for (let i = 1; i < m; i++) doy += dim[i];
-  return doy;
 }
 
 export function aggregateClimate(d, lat) {
@@ -57,7 +51,7 @@ export function aggregateClimate(d, lat) {
   const snows = new Array(365).fill(0), snowc = new Array(365).fill(0);
   const clouds = new Array(365).fill(0), cloudc = new Array(365).fill(0);
   time.forEach((t, i) => {
-    const doy = dateToDoy(t);
+    const doy = dateToDOY(t);   // DOY 0 = winter solstice; Feb 29 → null, skipped
     if (doy === null) return;
     if (tempC[i]      != null) { ts[doy] += tempC[i];   tc[doy]++; }
     if (precMM[i]     != null)   rs[doy] += precMM[i];

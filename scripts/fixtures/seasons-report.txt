@@ -1,0 +1,122 @@
+Oakland (preset)
+  gate: temp 22.2°F ✓ · rain 0.83 ✓ · evi 0.20 ✓
+  Wet green season         Feb 22 – Apr 25   63 days
+  Dry green season         Apr 26 – Aug 2    99 days
+  Warm dry season          Aug 3 – Nov 1     91 days
+  Cool bare season         Nov 2 – Feb 21   112 days
+
+Boulder
+  gate: temp 45.3°F ✓ · rain 0.38 ✗ · snow 5.3 in ✓ · cloud 17% ✗
+  Spring                   Feb 24 – Jun 13  110 days
+  Summer                   Jun 14 – Sep 9    88 days
+  Autumn                   Sep 10 – Nov 26   78 days
+  Winter                   Nov 27 – Feb 23   89 days
+
+Cairo
+  gate: temp 31.7°F ✓ · rain 1.13 ✓ · dewpoint 22.7°F ✓ · snow 0.0 in ✗ · cloud 29% ✓
+  Spring                   Feb 22 – May 28   96 days
+  Summer                   May 29 – Sep 17  112 days
+  Autumn                   Sep 18 – Dec 7    81 days
+  Winter                   Dec 8 – Feb 21    76 days
+
+Chicago
+  gate: temp 50.0°F ✓ · rain 0.21 ✗ · dewpoint 46.5°F ✓ · snow 2.7 in ✓ · cloud 23% ✓
+  Spring                   Mar 6 – Jun 8     95 days
+  Summer                   Jun 9 – Sep 12    96 days
+  Autumn                   Sep 13 – Dec 9    88 days
+  Winter                   Dec 10 – Mar 5    86 days
+
+Christchurch
+  gate: temp 21.5°F ✓ · rain 0.09 ✗ · evi 0.26 ✓ · snow 0.0 in ✗ · cloud 8% ✗
+  Cooling season           Feb 22 – May 23   91 days
+  Cool bare season         May 24 – Oct 25  155 days
+  Green season             Oct 26 – Feb 21  119 days
+
+Honolulu
+  gate: temp 6.6°F ✗ · rain 0.29 ✗ · dewpoint 6.5°F ✗ · snow 0.0 in ✗ · cloud 9% ✗
+  — No axis of this location’s year varies enough to mark a season.
+
+Kennebunkport
+  gate: temp 44.5°F ✓ · rain 0.12 ✗ · evi 0.55 ✓ · dewpoint 46.7°F ✓ · snow 6.3 in ✓ · cloud 11% ✗
+  Spring                   Mar 8 – Jun 15   100 days
+  Summer                   Jun 16 – Sep 10   87 days
+  Autumn                   Sep 11 – Dec 13   94 days
+  Winter                   Dec 14 – Mar 7    84 days
+
+London
+  gate: temp 26.5°F ✓ · rain 0.10 ✗ · dewpoint 19.1°F ✓ · snow 0.1 in ✗ · cloud 10% ✗
+  Spring                   Mar 6 – Jun 20   107 days
+  Summer                   Jun 21 – Aug 30   71 days
+  Autumn                   Aug 31 – Nov 22   84 days
+  Winter                   Nov 23 – Mar 5   103 days
+
+Manaus
+  gate: temp 4.3°F ✗ · rain 0.39 ✗ · dewpoint 1.6°F ✗ · snow 0.0 in ✗ · cloud 38% ✓
+  Dry season               Jun 7 – Oct 11   127 days
+  Wet grey season          Oct 12 – Jun 6   238 days
+
+Miami
+  gate: temp 12.2°F ✓ · rain 0.45 ✓ · dewpoint 16.0°F ✓ · snow 0.0 in ✗ · cloud 23% ✓
+  Muggy wet season         May 17 – Oct 25  162 days
+  Dry season               Oct 26 – May 16  203 days
+
+Mumbai
+  gate: temp 9.1°F ✓ · rain 1.23 ✓ · dewpoint 17.0°F ✓ · snow 0.0 in ✗ · cloud 79% ✓
+  Hot season               Mar 22 – Jun 6    77 days
+  Wet grey season          Jun 7 – Sep 20   106 days
+  Muggy season             Sep 21 – Nov 1    42 days
+  Dry clear season         Nov 2 – Mar 21   140 days
+
+Nairobi
+  gate: temp 9.2°F ✓ · rain 0.48 ✓ · dewpoint 7.1°F ✗ · snow 0.0 in ✗ · cloud 26% ✓
+  Humid wet season         Mar 22 – May 16   56 days
+  Dry grey season          May 17 – Sep 6   113 days
+  Dry season               Sep 7 – Oct 18    42 days
+  Wet season               Oct 19 – Dec 13   56 days
+  Warm season              Dec 14 – Mar 21   98 days
+
+Oakland (live)
+  gate: temp 22.4°F ✓ · rain 0.84 ✓ · evi 0.20 ✓ · dewpoint 13.6°F ✓ · snow 0.0 in ✗ · cloud 28% ✓
+  Green season             Mar 22 – Jun 6    77 days
+  Warm dry season          Jun 7 – Sep 27   113 days
+  Bare season              Sep 28 – Nov 15   49 days
+  Cool wet season          Nov 16 – Mar 21  126 days
+
+Phoenix
+  gate: temp 41.6°F ✓ · rain 0.45 ✓ · dewpoint 28.8°F ✓ · snow 0.0 in ✗ · cloud 26% ✓
+  Spring                   Feb 13 – Jun 4   112 days
+  Summer                   Jun 5 – Sep 8     96 days
+  Autumn                   Sep 9 – Nov 28    81 days
+  Winter                   Nov 29 – Feb 12   76 days
+
+Seoul (Hapjeong-dong)
+  gate: temp 48.6°F ✓ · rain 0.72 ✓ · snow 0.7 in ✗ · cloud 32% ✓
+  Spring                   Feb 21 – Jun 8   108 days
+  Summer                   Jun 9 – Sep 12    96 days
+  Autumn                   Sep 13 – Dec 3    82 days
+  Winter                   Dec 4 – Feb 20    79 days
+
+Singapore
+  gate: temp 2.4°F ✗ · rain 0.22 ✗ · dewpoint 3.3°F ✗ · snow 0.0 in ✗ · cloud 15% ✗
+  — No axis of this location’s year varies enough to mark a season.
+
+Sydney
+  gate: temp 17.6°F ✓ · rain 0.23 ✗ · dewpoint 20.1°F ✓ · snow 0.0 in ✗ · cloud 25% ✓
+  Cooling season           Mar 22 – Jun 13   84 days
+  Cool season              Jun 14 – Aug 16   64 days
+  Warming season           Aug 17 – Oct 25   70 days
+  Warm humid season        Oct 26 – Mar 21  147 days
+
+Timbuktu
+  gate: temp 24.1°F ✓ · rain 1.30 ✓ · snow 0.0 in ✗ · cloud 19% ✓
+  Hot clear season         Feb 22 – Jul 12  141 days
+  Wet season               Jul 13 – Sep 13   63 days
+  Clear season             Sep 14 – Nov 15   63 days
+  Dry season               Nov 16 – Feb 21   98 days
+
+Tokyo
+  gate: temp 38.8°F ✓ · rain 0.32 ✗ · dewpoint 44.2°F ✓ · snow 0.3 in ✗ · cloud 42% ✓
+  Spring                   Mar 6 – Jul 3    120 days
+  Summer                   Jul 4 – Sep 12    71 days
+  Autumn                   Sep 13 – Dec 11   90 days
+  Winter                   Dec 12 – Mar 5    84 days

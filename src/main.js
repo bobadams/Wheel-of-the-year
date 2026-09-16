@@ -15,7 +15,7 @@ import { fetchVisibility } from './fetch/visibility.js';
 import { fetchDewpoint } from './fetch/humidity.js';
 import {
   fetchActuals, fetchRecentEVI, fetchActualsPm25, fetchActualsVisibility,
-  fetchActualsDewpoint, calendarDOY, todayDate,
+  fetchActualsDewpoint, observedDOY, todayDate,
 } from './fetch/actuals.js';
 import { setStatus, setLoading, setEviProgress } from './ui/status.js';
 import { rebuildLegend } from './ui/legend.js';
@@ -97,7 +97,7 @@ async function loadLocation({ key, name, lat, lon, skipNormals = false }) {
   // Actuals are held date-keyed so repeat visits accumulate instead of
   // overwriting; the wheel draws the trailing year of whatever the store holds.
   const store = { ...(cached?.actuals ?? {}) };
-  setTodayDOY(calendarDOY(todayDate()));
+  setTodayDOY(observedDOY(todayDate()));
   const paintActuals = () => { setActuals(actualsForDisplay(store)); draw(); };
   paintActuals();
 

@@ -11,23 +11,7 @@
  * than as "average temperature", which would be a different number.
  */
 
-const DIM   = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-const MON_S = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const MON_L = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-
-/** Month index (0–11) containing a 0-indexed day of year. */
-export function doyMonth(doy) {
-  let d = doy, m = 0;
-  while (m < 11 && d >= DIM[m]) { d -= DIM[m]; m++; }
-  return m;
-}
-
-/** Calendar date for a 0-indexed day of year, e.g. "Sep 9". */
-export function doyLabel(doy, long = false) {
-  let d = Math.round(doy), m = 0;
-  while (m < 11 && d >= DIM[m]) { d -= DIM[m]; m++; }
-  return `${(long ? MON_L : MON_S)[m]} ${d + 1}`;
-}
+import { MON_L, doyMonth } from './calendar.js';
 
 const has  = a => Array.isArray(a) && a.length === 365 && a.some(v => v != null && !Number.isNaN(v));
 const mean = a => a.reduce((s, v) => s + v, 0) / a.length;

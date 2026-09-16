@@ -1,3 +1,5 @@
+import { dateToDOY } from '../data/calendar.js';
+
 function modisJulianKey(year, doy) {
   return `A${year}${String(doy).padStart(3, '0')}`;
 }
@@ -326,14 +328,11 @@ export async function fetchModisEVI(lat, lon, onProgress, opts = {}) {
   const complete = fetched.size >= total;
 
   // Group raw values by DOY across all years for IQR-trimmed averaging.
-  // Each composite slot (e.g. Jan 1) gets up to 10 values, one per year.
-  const dim = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  // Each composite slot (e.g. Jan 1) gets up to 10 values, one per year. A
+  // composite dated Feb 29 shares Mar 1's slot rather than being dropped.
   const doyBuckets = Array.from({ length: 365 }, () => []);
   results.forEach(({ date, value }) => {
-    const [, mo, dy] = date.split('-').map(Number);
-    let doy = 0;
-    for (let m = 0; m < mo - 1; m++) doy += dim[m];
-    doyBuckets[Math.min(doy + dy - 1, 364)].push(value);
+    doyBuckets[dateToDOY(date, { leapDay: 'mar1' })].push(value);
   });
 
   // IQR-trimmed mean: drop the single min and max when ≥ 5 samples available.

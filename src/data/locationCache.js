@@ -28,9 +28,19 @@
 // directly; without it every call here fails softly and the app just refetches
 // as it did before the cache existed.
 
-import { calendarDOY } from '../fetch/actuals.js';
+import { observedDOY } from '../fetch/actuals.js';
 
 const BASE = import.meta.env.VITE_IMAGE_URL ?? '/wheel-images';
+
+// What DOY 0 means in a stored normals array — the same numbering as
+// src/data/calendar.js, and the value server/climate-cache.mjs sends as `doy0`.
+// The service states it on every response; until one has, this client neither
+// uses stored normals nor sends its own, because a service that doesn't say so
+// predates the change and still counts from Jan 1. The two are deployed
+// separately, and reading one layout as the other would put every ring eleven
+// days out without a single error.
+const DOY_ZERO = 'winter-solstice';
+let layoutConfirmed = false;
 
 // The year the wheel shows. Older observations stay on the server (they are the
 // only record of a location visited long ago) but aren't drawn.
@@ -138,7 +148,7 @@ export function actualsForDisplay(store) {
     if (!map) { out[id] = null; continue; }
     const byDoy = new Map();
     Object.keys(map).sort().forEach(date => {
-      if (date >= cutoff && Number.isFinite(map[date])) byDoy.set(calendarDOY(date), map[date]);
+      if (date >= cutoff && Number.isFinite(map[date])) byDoy.set(observedDOY(date), map[date]);
     });
     out[id] = byDoy.size
       ? [...byDoy].map(([doy, value]) => ({ doy, value })).sort((a, b) => a.doy - b.doy)
@@ -212,9 +222,15 @@ export function eviProgressRecorder(record) {
 export async function loadLocationCache(key) {
   try {
     const r = await fetch(`${BASE}/climate?key=${encodeURIComponent(key)}`);
-    if (!r.ok) return null;
-    const rec = await r.json();
-    return rec && typeof rec === 'object' ? rec : null;
+    const body = await r.json().catch(() => null);
+    if (body?.doy0 === DOY_ZERO) layoutConfirmed = true;
+    if (!r.ok || !body || typeof body !== 'object') return null;
+    // Normals from a store that counts days differently are not ours to draw.
+    // The EVI baseline goes with them: its composites belong to the sample pixel
+    // recorded among the normals, and must not be resumed from a different one.
+    // Actuals are keyed by date, so they are safe either way.
+    if (body.doy0 !== DOY_ZERO) { const { normals, baseline, ...rest } = body; return rest; }
+    return body;
   } catch {
     return null;
   }
@@ -226,11 +242,15 @@ export async function loadLocationCache(key) {
  * that had arrived by then on the server for the next visit to build on.
  */
 export function saveLocationCache(key, patch) {
+  if (!layoutConfirmed) {
+    const { normals, baseline, ...rest } = patch;   // as in loadLocationCache
+    patch = rest;
+  }
   try {
     fetch(`${BASE}/climate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, ...patch }),
+      body: JSON.stringify({ key, ...patch, doy0: DOY_ZERO }),
     }).catch(() => {});
   } catch { /* cache is best-effort */ }
 }

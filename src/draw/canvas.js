@@ -1,12 +1,17 @@
 // Shared canvas math helpers — no DOM or state imports needed
-export const SOLSTICE_OFFSET = -Math.PI / 2 - (354 / 365) * Math.PI * 2;
+
+// DOY 0 is the winter solstice (see src/data/calendar.js), and the top of the
+// wheel is the MIDDLE of that day. Day d's arc runs from doy2angle(d) to
+// doy2angle(d + 1), and anything marking a whole day sits at d + 0.5 — so the
+// solstice's own marker points straight up.
+export const SOLSTICE_OFFSET = -Math.PI / 2 - (0.5 / 365) * Math.PI * 2;
 
 export function doy2angle(d) {
   return (d / 365) * Math.PI * 2 + SOLSTICE_OFFSET;
 }
 
-// Inverse of doy2angle: maps a canvas angle (e.g. from atan2) to a 0-indexed
-// day of year. Normalizes the result into [0, 365).
+// Inverse of doy2angle: maps a canvas angle (e.g. from atan2) to a fractional
+// DOY in [0, 365). Math.floor of it is the day whose arc contains the angle.
 export function angle2doy(angle) {
   let frac = (angle - SOLSTICE_OFFSET) / (Math.PI * 2);
   frac = ((frac % 1) + 1) % 1;

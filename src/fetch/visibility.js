@@ -1,12 +1,5 @@
-// Returns 0-based DOY (0–364), skipping Feb 29. Returns null for Feb 29.
-function dateToDoy(dateStr) {
-  const [, m, d] = dateStr.split('-').map(Number);
-  if (m === 2 && d === 29) return null;
-  const dim = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  let doy = d - 1;
-  for (let i = 1; i < m; i++) doy += dim[i];
-  return doy;
-}
+// DOY 0 is the winter solstice; Feb 29 has no slot and is skipped (null).
+import { dateToDOY } from '../data/calendar.js';
 
 // Fetch hourly visibility (meters) from Open-Meteo archive, aggregate to
 // daily-mean DOY normals, and return a 365-element array in miles.
@@ -37,7 +30,7 @@ export async function fetchVisibility(lat, lon) {
   const doySums = new Array(365).fill(0);
   const doyCnts = new Array(365).fill(0);
   Object.keys(daySums).forEach(dateStr => {
-    const doy = dateToDoy(dateStr);
+    const doy = dateToDOY(dateStr);
     if (doy === null) return;
     doySums[doy] += daySums[dateStr] / dayCnts[dateStr];
     doyCnts[doy]++;
