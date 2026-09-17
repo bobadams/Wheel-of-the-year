@@ -1,6 +1,6 @@
 import { fetchPixelGrid, fetchAnnualSeries, cellLatLon } from '../fetch/evi.js';
 import { currentData } from '../state.js';
-import { MON_S, monthSpans } from '../data/calendar.js';
+import { yearAxis, closeYear, drawMonthAxis } from './yearAxis.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const SCREEN_KM    = 10;
@@ -218,8 +218,9 @@ function drawTimeSeries(canvas, eviArray) {
     return;
   }
 
-  // x: DOY 0–364 (0 = winter solstice, as on the wheel), y: EVI 0–1
-  const toX = i => PAD.l + i / 364 * pw;
+  // x: winter solstice to winter solstice, as on the wheel (ui/yearAxis.js); y: EVI 0–1
+  const axis = yearAxis(PAD.l, pw);
+  const toX = axis.x;
   const toY = v => PAD.t + (1 - Math.max(0, Math.min(1, v))) * ph;
 
   // ── Horizontal grid + Y labels ──
@@ -231,26 +232,18 @@ function drawTimeSeries(canvas, eviArray) {
     ctx.fillText(v.toFixed(1), PAD.l - 5, y + 3.5);
   });
 
-  // ── Month dividers + labels — unrolled from the top of the wheel, so
-  // December opens and closes the axis ──
-  ctx.font = '10px sans-serif'; ctx.fillStyle = '#aaa'; ctx.textAlign = 'center';
-  monthSpans().forEach(({ month, start, end }) => {
-    const x = toX(start);
-    if (start > 0) {
-      ctx.strokeStyle = '#d8d0c4'; ctx.lineWidth = 0.5;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + ph); ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    if (end - start >= 10) ctx.fillText(MON_S[month], (x + toX(end)) / 2, PAD.t + ph + 14);
-  });
+  // ── Month dividers + labels, with the winter solstice at both ends ──
+  drawMonthAxis(ctx, axis, { top: PAD.t, bottom: PAD.t + ph, labelY: PAD.t + ph + 14, dash: [3, 3] });
+
+  // Closed back onto the solstice at the right edge.
+  const evi = closeYear(eviArray);
 
   // ── Area fill ──
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(toX(0), toY(0));
-  eviArray.forEach((v, i) => ctx.lineTo(toX(i), toY(v)));
-  ctx.lineTo(toX(364), toY(0));
+  evi.forEach((v, i) => ctx.lineTo(toX(i), toY(v)));
+  ctx.lineTo(toX(365), toY(0));
   ctx.closePath();
   ctx.fillStyle = '#27ae60'; ctx.globalAlpha = 0.20;
   ctx.fill();
@@ -260,7 +253,7 @@ function drawTimeSeries(canvas, eviArray) {
   ctx.save();
   ctx.strokeStyle = '#27ae60'; ctx.lineWidth = 1.8;
   ctx.beginPath();
-  eviArray.forEach((v, i) => i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v)));
+  evi.forEach((v, i) => i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v)));
   ctx.stroke();
   ctx.restore();
 

@@ -68,7 +68,11 @@ No backend, no database, no runtime dependencies.
         ├── controls.js           # Ring control panel: toggle, color, thickness, opacity, drag-reorder
         ├── legend.js             # Legend items for visible rings
         ├── status.js             # Status messages (ok / loading / error) and spinner
-        └── tooltip.js            # Mouse-hover tooltip showing daily values per ring
+        ├── tooltip.js            # Mouse-hover tooltip showing daily values per ring
+        ├── ringChart.js          # Ring chart modal (click a ring) + openChartModal, the shared modal shell
+        ├── seasonsChart.js       # Seasons modal: every dataset the seasons were derived from, with the season changes
+        ├── eviAnalysis.js        # Vegetation analysis modal: MODIS peak/trough grids + seasonal profile
+        └── yearAxis.js           # The solstice-to-solstice axis every modal chart uses
 ```
 
 ## Development Workflows
@@ -397,6 +401,22 @@ stale without anyone noticing — the `MIN_GAIN` comment once promised that "a
 Mediterranean year resolves to three", which was true only of the bundled Oakland
 preset's three axes and false of a live Oakland visit.
 
+### The seasons modal shows the working
+
+Clicking the seasons band, or "Show how these were found" in its panel, opens
+`src/ui/seasonsChart.js`: one panel per dataset the calculation used, on a shared
+solstice-to-solstice year, with a vertical line at each season change, the dates
+along the top, and each season shaded and named in its stretch (a season over
+the solstice is named at both ends). It plots exactly what `computeSeasons`
+measured — `seasons.axes[].series`, the smoothed series each gate was tested on —
+so the chart cannot disagree with the band. `seasons.datesFrom` says how the
+dates were found: `'temperature'` (the quartet — the temperature panel draws the
+two `QUARTET_EXTREME` thresholds the dates are read off) or `'segmentation'`.
+With seasons found it shows the axes that defined them and any near-miss axis
+that only named them; with none, every axis the gate looked at, each labelled
+with what it measured against its threshold. A series that never changes (snow
+in the tropics) is listed below the chart instead of given an empty panel.
+
 Seasons are recomputed in `state.js` alongside `smoothedData` on every data
 change (a few ms), so each stage of a load sharpens them and the band can never
 disagree with the rings it came from. There is nothing to cache and no separate
@@ -468,8 +488,14 @@ Four things about it are load-bearing:
 - Anything that scans a 365-point array for a run of equal values must scan
   **circularly**: the shortest day's plateau straddles DOY 364 → 0 (see
   `plateauMid` in `draw/labels.js`).
-- Linear charts (`ui/ringChart.js`, the EVI panel) are the wheel unrolled from the
-  top, so their axis opens on Dec 21 and December appears at both ends.
+- **Every modal chart runs winter solstice to winter solstice**, through
+  `src/ui/yearAxis.js` — the ring chart, the EVI panel's seasonal profile and the
+  seasons modal. Both edges are the middle of DOY 0 (exactly the top of the
+  wheel), a day's value sits at `x(doy)`, a series is closed by plotting DOY 0
+  again at `x(365)` (`closeYear`), and month dividers fall half a day earlier at
+  `boundaryX`. Both ends are labelled "Dec 21". A new chart must use it rather
+  than mapping 0–364 across its width, which ends a day short of the solstice
+  and never closes the curve.
 
 ### Canvas coordinate system
 - Origin at canvas center `(cx, cy)`
@@ -1006,6 +1032,8 @@ There is no test suite. The project has no test runner, no test files, and no CI
 | Add a new data ring | `ringDefs.js`, `controls.js` (legend), `fetch/climate.js` or new fetch module, `state.js` |
 | Change how seasons are found, counted or named | `src/data/seasons.js` (`SEASON_AXES` gates and vocabulary, `MIN_GAIN`, `RATE_WEIGHT`, `MERGE_DISTANCE`, `NEAR_MISS`, `QUARTET_*`, `nameFromSignature`) — then `npm run seasons-report` |
 | Change how the seasons band looks | `src/draw/seasons.js` |
+| Change the seasons modal | `src/ui/seasonsChart.js`; what it plots comes from `seasons.axes[].series` and `datesFrom` in `computeSeasons` |
+| Add a chart modal | `openChartModal` in `src/ui/ringChart.js` for the shell, `src/ui/yearAxis.js` for the solstice-to-solstice axis |
 | Add an optional normal (its own API) | new module in `src/fetch/`, a stage in `loadLocation()`, `NORMAL_SERIES`/`ACTUAL_SERIES` in **both** `locationCache.js` and `climate-cache.mjs` |
 | Change color scheme | `styles.css` (custom properties) and `ringDefs.js` (default colors) |
 | Add a new decoration | `draw/decorations.js`, then call it from `paintWheel()` in `draw/wheel.js` — place anything dated through `src/data/calendar.js` |

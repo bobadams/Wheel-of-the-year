@@ -4,6 +4,7 @@ import { seasonRangeLabel } from '../data/seasons.js';
 import { savePrefs } from '../data/prefs.js';
 import { rebuildLegend } from './legend.js';
 import { showEviAnalysis } from './eviAnalysis.js';
+import { showSeasonsChart } from './seasonsChart.js';
 
 // draw is passed in to avoid a circular dependency (main.js owns draw)
 let _draw = null;
@@ -39,6 +40,9 @@ function seasonPanel() {
       <span class="misc-label" style="font-size:.7rem;opacity:.75">
         derived from ${pass.length ? pass.join(', ') : '—'}${fail.length ? ` · too flat here: ${fail.join(', ')}` : ''}
       </span>
+    </div>
+    <div class="misc-row" style="padding-left:1.3rem">
+      <a href="#" data-action="showSeasons" style="font-size:.75rem">Show how these were found</a>
     </div>`;
 }
 
@@ -179,6 +183,8 @@ export function refreshSourceBadges() {
 }
 
 function handleControlClick(e) {
+  const seasonsLink = e.target.closest('[data-action="showSeasons"]');
+  if (seasonsLink) { e.preventDefault(); showSeasonsChart(); return; }
   const reorderBtn = e.target.closest('.reorder-btn');
   if (reorderBtn) {
     moveRing(reorderBtn.dataset.id, Number(reorderBtn.dataset.dir)); return;

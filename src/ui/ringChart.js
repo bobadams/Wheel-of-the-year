@@ -1,6 +1,6 @@
 import { RING_DEFS } from '../data/ringDefs.js';
 import { catmullRomPath } from '../draw/canvas.js';
-import { MON_S, monthSpans } from '../data/calendar.js';
+import { yearAxis, closeYear, drawMonthAxis } from './yearAxis.js';
 import {
   canvas, ringState, smoothedData, currentData,
   actuals, displayState, todayDOY,
@@ -16,7 +16,8 @@ function niceStep(range, n) {
   return (frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10) * 10 ** exp;
 }
 
-function injectStyles() {
+/** The chart-modal stylesheet, shared by every chart that opens in a modal. */
+export function injectChartStyles() {
   if (document.getElementById('ring-chart-css')) return;
   const s = document.createElement('style');
   s.id = 'ring-chart-css';
@@ -58,7 +59,9 @@ function drawLineChart(canvasEl, ringDef, normalsData, color, actualsEntries) {
   if (actualsEntries) actualsEntries.forEach(e => { hi = Math.max(hi, e.value); });
   hi += (hi - lo) * 0.05;
 
-  const toX = i => PAD.l + (i / 364) * pw;
+  // Winter solstice to winter solstice, like the wheel (see ui/yearAxis.js).
+  const axis = yearAxis(PAD.l, pw);
+  const toX = axis.x;
   const toY = v => PAD.t + (1 - (v - lo) / (hi - lo)) * ph;
 
   // Horizontal grid lines + Y-axis tick labels
@@ -84,27 +87,8 @@ function drawLineChart(canvasEl, ringDef, normalsData, color, actualsEntries) {
     ctx.fillText(label, PAD.l - 5, y + 3.5);
   }
 
-  // Month dividers + X-axis labels. The chart is the wheel unrolled from its
-  // top, so the axis opens on the winter solstice and December appears at both
-  // ends — its first twenty days close the axis and its last eleven open it.
-  ctx.textAlign = 'center';
-  ctx.font = '10px sans-serif';
-  ctx.fillStyle = '#aaa';
-  for (const { month, start, end } of monthSpans()) {
-    if (start > 0) {
-      ctx.save();
-      ctx.strokeStyle = '#d8d0c4';
-      ctx.lineWidth = 0.5;
-      ctx.setLineDash([0, 4]);
-      ctx.beginPath();
-      ctx.moveTo(toX(start), PAD.t);
-      ctx.lineTo(toX(start), PAD.t + ph);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-    }
-    if (end - start >= 10) ctx.fillText(MON_S[month], toX((start + end - 1) / 2), PAD.t + ph + 22);
-  }
+  // Month dividers + X-axis labels, with the winter solstice at both ends.
+  drawMonthAxis(ctx, axis, { top: PAD.t, bottom: PAD.t + ph, labelY: PAD.t + ph + 22, dash: [0, 4] });
 
   // Today marker
   if (todayDOY != null) {
@@ -126,14 +110,17 @@ function drawLineChart(canvasEl, ringDef, normalsData, color, actualsEntries) {
     ctx.restore();
   }
 
+  // Normals, closed back onto the solstice at the right edge.
+  const normals = closeYear(normalsData);
+
   // Normals area fill
   ctx.save();
   ctx.globalAlpha = 0.12;
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(toX(0), toY(lo));
-  for (let i = 0; i < 365; i++) ctx.lineTo(toX(i), toY(normalsData[i]));
-  ctx.lineTo(toX(364), toY(lo));
+  normals.forEach((v, i) => ctx.lineTo(toX(i), toY(v)));
+  ctx.lineTo(toX(365), toY(lo));
   ctx.closePath();
   ctx.fill();
   ctx.restore();
@@ -145,8 +132,7 @@ function drawLineChart(canvasEl, ringDef, normalsData, color, actualsEntries) {
   ctx.globalAlpha = 0.75;
   ctx.lineJoin = 'round';
   ctx.beginPath();
-  ctx.moveTo(toX(0), toY(normalsData[0]));
-  for (let i = 1; i < 365; i++) ctx.lineTo(toX(i), toY(normalsData[i]));
+  normals.forEach((v, i) => (i ? ctx.lineTo(toX(i), toY(v)) : ctx.moveTo(toX(i), toY(v))));
   ctx.stroke();
   ctx.restore();
 
@@ -170,6 +156,11 @@ function drawLineChart(canvasEl, ringDef, normalsData, color, actualsEntries) {
       const segments = tDOY >= 0
         ? [allEntries.filter(e => e.doy <= tDOY), allEntries.filter(e => e.doy > tDOY)]
         : [allEntries];
+      // The older segment runs up to Dec 20 of the previous turn, and the day
+      // after that is the Dec 21 this turn opened with — so it continues to the
+      // solstice at the right edge instead of stopping a day short of it.
+      const older = segments[1];
+      if (older?.length && allEntries[0].doy === 0) older.push({ doy: 365, value: allEntries[0].value });
 
       ctx.save();
       ctx.strokeStyle = color;
@@ -237,15 +228,7 @@ export function showRingChart(ringId) {
     && Array.isArray(actuals[ringId])
     && actuals[ringId].length > 0;
 
-  injectStyles();
-  document.getElementById('ring-chart-overlay')?.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'ring-chart-overlay';
-  overlay.className = 'rc-overlay';
-  overlay.innerHTML = `
-    <div class="rc-modal">
-      <button class="rc-close" aria-label="Close">×</button>
+  const overlay = openChartModal(`
       <h2 style="color:${color}">${ringDef.label}</h2>
       <p class="rc-subtitle">${cityName}${cityName ? ' · ' : ''}${ringDef.unit}</p>
       <div class="rc-chart-wrap">
@@ -260,24 +243,34 @@ export function showRingChart(ringId) {
           <div class="rc-swatch" style="background:none;border-top:1.5px dashed ${color}"></div>
           Actuals (past 11 mo)
         </div>` : ''}
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  const handleEsc = e => {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', handleEsc); }
-  };
-  overlay.querySelector('.rc-close').addEventListener('click', () => {
-    overlay.remove(); document.removeEventListener('keydown', handleEsc);
-  });
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) { overlay.remove(); document.removeEventListener('keydown', handleEsc); }
-  });
-  document.addEventListener('keydown', handleEsc);
+      </div>`);
 
   drawLineChart(
     overlay.querySelector('.rc-chart-canvas'),
     ringDef, data, color,
     hasActuals ? actuals[ringId] : null,
   );
+}
+
+/**
+ * Open a chart modal holding `html`, replacing any chart modal already open.
+ * It closes on its × button, a click on the backdrop, or Escape. Returns the
+ * overlay element so the caller can find its canvas.
+ */
+export function openChartModal(html) {
+  injectChartStyles();
+  document.getElementById('ring-chart-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'ring-chart-overlay';
+  overlay.className = 'rc-overlay';
+  overlay.innerHTML = `<div class="rc-modal"><button class="rc-close" aria-label="Close">×</button>${html}</div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  overlay.querySelector('.rc-close').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKey);
+  return overlay;
 }

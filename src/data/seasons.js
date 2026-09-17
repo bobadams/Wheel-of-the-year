@@ -398,7 +398,7 @@ const QUARTET_TEMP_SHARE  = 0.8;
 // which a pure sinusoid divides into four equal quarters; a real curve that
 // lingers near its trough — a long continental winter — gets a longer winter
 // from the same rule.
-const QUARTET_EXTREME = (1 - Math.SQRT1_2) / 2;
+export const QUARTET_EXTREME = (1 - Math.SQRT1_2) / 2;
 
 const QUARTET_KEYS = { Winter: 'cold', Spring: 'green', Summer: 'hot', Autumn: 'bare' };
 
@@ -466,18 +466,25 @@ function quartetRanges(T) {
  * @returns {{
  *   seasons: {startDOY:number, endDOY:number, days:number, name:string, key:string,
  *             color:string, signature:Object, means:Object, trend:Object}[],
- *   axes: {id:string, value:number, min:number, unit:string, passed:boolean}[],
+ *   axes: {id:string, value:number, min:number, unit:string, passed:boolean,
+ *          nearMiss:boolean, series:number[]}[],
  *   basis: string[],  note: string|null,
+ *   datesFrom: 'temperature'|'segmentation'|null,
  * }}
  *   `seasons` is empty when the location has no axis with a real annual cycle —
  *   which is a finding about the place, not a failure, and `note` says so.
+ *   Each entry in `axes` carries the smoothed series its gate was measured on,
+ *   so the seasons modal can show exactly what the calculation saw. `datesFrom`
+ *   says whether the boundaries were read off temperature (the quartet) or
+ *   found by segmenting every gated axis together.
  */
 export function computeSeasons(data) {
   const gated = gateAxes(data);
   const axes = gated.filter(ax => ax.passed);
-  const report = gated.map(({ id, value, min, unit, passed }) => ({ id, value, min, unit, passed }));
+  const report = gated.map(({ id, value, min, unit, passed, nearMiss, smooth }) =>
+    ({ id, value, min, unit, passed, nearMiss, series: smooth }));
   const basis = axes.map(ax => ax.id);
-  const none = note => ({ seasons: [], axes: report, basis, note });
+  const none = note => ({ seasons: [], axes: report, basis, note, datesFrom: null });
 
   if (!axes.length) {
     return none(gated.length
@@ -537,7 +544,7 @@ export function computeSeasons(data) {
           ...describe(start, end), name, key: QUARTET_KEYS[name], color: SEASON_COLORS[QUARTET_KEYS[name]],
         }))
         .sort((a, b) => a.startDOY - b.startDOY);
-      return { seasons, axes: report, basis, note: null };
+      return { seasons, axes: report, basis, note: null, datesFrom: 'temperature' };
     }
   }
 
@@ -569,7 +576,7 @@ export function computeSeasons(data) {
   }
 
   const seasons = arcs.map(a => ({ ...a, color: SEASON_COLORS[a.key] ?? SEASON_COLORS.mild }));
-  return { seasons, axes: report, basis, note: null };
+  return { seasons, axes: report, basis, note: null, datesFrom: 'segmentation' };
 }
 
 /** "Nov 6 – Mar 26" for one season. */

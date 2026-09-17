@@ -24,6 +24,7 @@ import { setupTooltip } from './ui/tooltip.js';
 import { buildEmbeddedFontStyle, renderSVG, downloadFile, fileStem } from './export/svg.js';
 import { printPoster, downloadPosterSVG, POSTER_SIZES, DEFAULT_SIZE } from './print/poster.js';
 import { showRingChart } from './ui/ringChart.js';
+import { showSeasonsChart } from './ui/seasonsChart.js';
 import {
   locationKey, loadLocationCache, saveLocationCache,
   hasSeries, newestDate, daysSince, actualsForDisplay, mergeActuals,
@@ -668,7 +669,9 @@ function init() {
       if (!ringState[id].visible || !layouts[id]) continue;
       const { innerFrac, thickFrac } = layouts[id];
       if (rFrac >= innerFrac && rFrac <= innerFrac + thickFrac) {
-        showRingChart(id);
+        // The seasons band has no values of its own; it opens the working behind it.
+        if (id === 'seasons') showSeasonsChart();
+        else showRingChart(id);
         return;
       }
     }
