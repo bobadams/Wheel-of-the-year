@@ -24,7 +24,7 @@ export const INK = {
 // ─── Radial registers (fractions of canvas.W) ────────────────────────────────
 // Read outward. Each band is sized so the one outside it starts clear of the
 // tallest thing the previous one can draw — the outermost annotation (a
-// holiday label on the top level, halo included) lands at ~0.496, just inside
+// holiday label on the top level, halo included) lands at ~0.494, just inside
 // the canvas. Nothing sits outside the holidays, so if they move inward the
 // whole table should scale up with them rather than leave an empty margin.
 export const R = {
@@ -44,16 +44,23 @@ export const R = {
   calInner:      0.3888,
   calOuter:      0.4212,
 
-  // Moon lane, then the two annotation registers.
-  moon:          0.4304,
+  // Moon lane, then the two annotation registers. Each lane is stated as a
+  // centre plus a half-height, and consecutive lanes must clear each other by
+  // the SUM of those halves: the moon dot reaches 0.4358 and the holiday symbol
+  // starts at 0.4372, so a full moon falling on a feast day no longer prints
+  // one on top of the other.
+  moon:          0.4300,
   moonDot:       0.0058,
 
-  holidayMark:   0.4390,
+  holidayMark:   0.4424,
   holidaySym:    0.0052,
-  holidayLabel:  0.4493,   // innermost of four candidate label radii
-  holidayStep:   0.0127,
+  // Innermost of three candidate label radii. It must clear the symbol lane by
+  // half a label — holidays.js drops any candidate that doesn't, and this one
+  // used to be dropped every time, quietly making four levels into three.
+  holidayLabel:  0.4560,
+  holidayStep:   0.0148,
   holidayFont:   0.0121,
-  holidayLevels: 4,
+  holidayLevels: 3,
 
   // The solstice/equinox cross reaches just past the calendar band.
   axisOuter:     0.4255,

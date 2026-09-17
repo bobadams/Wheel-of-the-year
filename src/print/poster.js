@@ -21,6 +21,7 @@ import { paintWheel, paintPaper } from '../draw/wheel.js';
 import { INK, hairline, drawTracked } from '../draw/theme.js';
 import { TRAD_COLORS, TRAD_LABELS, drawSymbol } from '../draw/holidays.js';
 import { coordLabel } from '../data/summary.js';
+import { hasSeries } from '../data/locationCache.js';
 import { seasonRangeLabel } from '../data/seasons.js';
 import { buildEmbeddedFontStyle, renderSVG, downloadFile, fileStem } from '../export/svg.js';
 
@@ -51,7 +52,9 @@ function setFont(ctx, { size, family = 'Crimson Pro', style = '', weight = '' })
 
 /** Greedy word wrap against the current font. */
 function wrapText(ctx, text, maxW) {
-  const words = text.split(/\s+/);
+  // Plain spaces only: a non-breaking space is a deliberate instruction to keep
+  // two words together (see bindYears), and /\s+/ would split on it.
+  const words = text.split(/[ \t\n]+/);
   const lines = [];
   let line = '';
   for (const word of words) {
@@ -60,6 +63,22 @@ function wrapText(ctx, text, maxW) {
     else line = next;
   }
   if (line) lines.push(line);
+
+  // Pull words down until the last line is no longer a runt. A greedy wrap
+  // leaves whatever is left over on the final line, and the lead paragraph
+  // ended on "now in progress." alone under a full measure; moving a word down
+  // costs the line above nothing and settles the paragraph.
+  const fits = l => ctx.measureText(l).width <= maxW;
+  for (let guard = 0; guard < words.length && lines.length > 1; guard++) {
+    const last = lines[lines.length - 1];
+    if (ctx.measureText(last).width >= maxW * 0.45) break;
+    const prev = lines[lines.length - 2].split(' ');
+    if (prev.length < 2) break;
+    const moved = prev.pop();
+    if (!fits(`${moved} ${last}`)) break;
+    lines[lines.length - 2] = prev.join(' ');
+    lines[lines.length - 1] = `${moved} ${last}`;
+  }
   return lines;
 }
 
@@ -86,12 +105,51 @@ function rule(ctx, x1, x2, y, W, alpha = 1, weight = 0.0007) {
 
 // ─── Key content ─────────────────────────────────────────────────────────────
 
-/** Scale range actually in force for a ring, in its own units. */
+/**
+ * Scale range actually in force for a ring, in its own units.
+ *
+ * Only a `minmax` ring's range is also the year's own high and low; a fixed or
+ * percentile scale is a ruler chosen in advance, and printing "32°F – 100°F"
+ * beside a place whose year runs 56° to 79° invites the reader to take the
+ * ruler for the reading. Those two say so.
+ */
 function ringRange(id, bounds) {
   const def = RING_DEFS.find(r => r.id === id);
   const b = bounds[id] ?? { lo: def.normLo, hi: def.normHi };
   const fmt = RING_LABELS[id]?.fmt ?? (v => `${v}`);
-  return `${fmt(b.lo)} – ${fmt(b.hi)}`;
+  const mode = ringState[id]?.normMode ?? def.defaultNormMode;
+  if (mode !== 'minmax') return `scale ${fmt(b.lo)} – ${fmt(b.hi)}`;
+
+  // A minmax ring reports the year itself, so it is read off the series rather
+  // than off the drawing bounds: those carry a hi = lo + 1 guard against a
+  // zero-width ring, which printed "0.0" – 1.0"" of snow for a place that has
+  // never seen any.
+  const vals = (currentData[id] ?? []).filter(Number.isFinite);
+  const lo = vals.length ? Math.min(...vals) : b.lo;
+  const hi = vals.length ? Math.max(...vals) : b.hi;
+  return `${fmt(lo)} – ${fmt(hi)}`;
+}
+
+/**
+ * The footer's credit line: the upstreams this sheet actually drew from, in
+ * ring order and without repeats. It used to name all four whatever was
+ * printed, so a wheel with no air-quality ring still credited Copernicus.
+ */
+function sourceCredits() {
+  const credits = ringOrder
+    .filter(id => ringState[id].visible && hasSeries(currentData[id]))
+    .map(id => RING_DEFS.find(r => r.id === id)?.credit)
+    .filter(Boolean);
+  return [...new Set(credits), 'Geocoding: OpenStreetMap Nominatim'].join(' · ');
+}
+
+/**
+ * Keep a source's years with its name: "ERA5 1991–2020" wrapping after "ERA5"
+ * reads as two credits. A non-breaking space is invisible to everything but
+ * wrapText, which is why wrapText breaks on plain spaces only.
+ */
+function bindYears(source) {
+  return source.replace(/ (?=\d)/g, ' ');
 }
 
 /**
@@ -107,7 +165,16 @@ function keyBlocks(S) {
 
   // The seasons band is not a scaled ring, so it gets its own block below
   // rather than a range that would read "undefined – undefined".
-  const ringItems = visible.filter(id => !RING_DEFS.find(r => r.id === id)?.categorical).map(id => {
+  //
+  // A ring switched on for a place that has no such series is left out
+  // entirely. Its range would be the fallback scale from ringDefs and its
+  // source the upstream that would have been asked — so an Oakland sheet with
+  // snow switched on printed "Snow Depth · 0.0" – 36.0" · ERA5 1991–2020"
+  // under an empty lane, which is a measurement nobody made.
+  const ringItems = visible.filter(id => {
+    const def = RING_DEFS.find(r => r.id === id);
+    return !def?.categorical && hasSeries(currentData[id]);
+  }).map(id => {
     const def = RING_DEFS.find(r => r.id === id);
     const color = ringState[id].color;
     // The ring definition carries the short form of the provenance; the live
@@ -117,7 +184,7 @@ function keyBlocks(S) {
     const source = /proxy|unavailable/i.test(live) ? live : def.source;
     return {
       title: `${def.label} · ${def.unit}`,
-      detail: `${ringRange(id, bounds)} · ${source}`,
+      detail: `${ringRange(id, bounds)} · ${bindYears(source)}`,
       swatch: (ctx, x, y, w, h) => {
         ctx.save();
         // The swatch is the ring's own treatment in miniature: a body at the
@@ -295,19 +362,24 @@ const LEAD = [
 function keyRows(ctx, blocks, colW, S) {
   const units = [];
 
+  // Both the block's own heading and the one that reopens it at the top of the
+  // next column, so the packer can charge itself for the continuation before
+  // deciding to break.
+  const headingRow = (text) => ({
+    h: S.head * 1.6, keepNext: true,
+    draw: (x, y) => {
+      setFont(ctx, { size: S.head, family: 'Cinzel' });
+      ctx.fillStyle = INK.light; ctx.globalAlpha = 1;
+      caps(ctx, text, x, y, S.head, 0.18);
+      rule(ctx, x, x + colW, y + S.head * 0.55, S.W, 0.9);
+    },
+  });
+
   blocks.forEach(block => {
     const rows = [];
-    units.push(rows);
+    units.push({ rows, cont: headingRow(`${block.heading}, cont.`) });
 
-    rows.push({
-      h: S.head * 1.6, keepNext: true,
-      draw: (x, y) => {
-        setFont(ctx, { size: S.head, family: 'Cinzel' });
-        ctx.fillStyle = INK.light; ctx.globalAlpha = 1;
-        caps(ctx, block.heading, x, y, S.head, 0.18);
-        rule(ctx, x, x + colW, y + S.head * 0.55, S.W, 0.9);
-      },
-    });
+    rows.push(headingRow(block.heading));
 
     (block.paragraphs ?? []).forEach(p => {
       setFont(ctx, { size: S.body });
@@ -390,48 +462,58 @@ function bindRows(rows) {
  * which on a poster shows up as one column running a third longer than its
  * neighbours. Binary-searching the smallest workable column height and packing
  * against it costs a few lines and balances properly.
+ *
+ * The unit of packing is a bound ROW, not a block. A block is kept whole where
+ * it fits and split where it does not, reopening in the next column under its
+ * own heading — with ten rings switched on, block granularity gave the ring
+ * list a column to itself, left the fourth column empty, and squeezed the
+ * wheel to a third of the sheet, all to avoid a break the key can state.
  */
 function flowColumns(units, n, blockGap) {
-  // A block is the unit of packing and is never split: doing so puts its
-  // heading in a different column from half its entries, orphaning the rest
-  // of it overleaf. The search therefore starts at the tallest single
-  // block, so a long block simply sets the key's height (and the wheel takes
-  // what is left) rather than being broken across a column boundary.
-  const bound = units.map(rows => bindRows(rows));
-  const height = u => u.reduce((a, r) => a + r.h, 0);
+  const bound = units.map(u => ({ rows: bindRows(u.rows), cont: u.cont }));
 
-  // The gap between blocks belongs to the join, not to a block — otherwise a
-  // block that begins a column carries leading space and its heading sits
-  // lower than the headings beside it.
-  const fits = limit => {
-    let cols = 1, used = 0;
-    for (const u of bound) {
-      const h = height(u);
-      if (used > 0 && used + blockGap + h > limit) { cols++; used = h; }
-      else used += (used > 0 ? blockGap : 0) + h;
-      if (cols > n) return false;
+  // Pack against a column height, reporting whether it held. The gap between
+  // blocks belongs to the join, not to a block — otherwise a block that begins
+  // a column carries leading space and its heading sits lower than the headings
+  // beside it.
+  const pack = limit => {
+    const cols = Array.from({ length: n }, () => []);
+    let ci = 0, used = 0, overflowed = false;
+    const put = row => { cols[ci].push(row); used += row.h; };
+
+    for (const block of bound) {
+      let started = false;
+      for (const row of block.rows) {
+        const gap = !started && used > 0 ? blockGap : 0;
+        if (used > 0 && used + gap + row.h > limit) {
+          if (ci < n - 1) {
+            ci++; used = 0;
+            if (started) put(block.cont);   // reopen the block by name
+          } else {
+            overflowed = true;
+            if (gap) put({ h: blockGap, draw: () => {} });
+          }
+        } else if (gap) {
+          put({ h: blockGap, draw: () => {} });
+        }
+        put(row);
+        started = true;
+      }
     }
-    return true;
+    return { cols, overflowed };
   };
 
-  let lo = Math.max(...bound.map(height), 1);
-  let hi = bound.reduce((a, u) => a + height(u), 0);
+  // A column must at least hold the tallest single row, plus the continuation
+  // heading that row may have to carry.
+  const tallestRow = Math.max(...bound.map(b =>
+    Math.max(...b.rows.map(r => r.h + b.cont.h))), 1);
+  let lo = tallestRow;
+  let hi = bound.reduce((a, b) => a + b.rows.reduce((t, r) => t + r.h, 0) + blockGap, 0);
   while (hi - lo > 0.5) {
     const mid = (lo + hi) / 2;
-    if (fits(mid)) hi = mid; else lo = mid;
+    if (pack(mid).overflowed) lo = mid; else hi = mid;
   }
-  const limit = hi;
-
-  const cols = Array.from({ length: n }, () => []);
-  let ci = 0, used = 0;
-  for (const u of bound) {
-    const h = height(u) + (used > 0 ? blockGap : 0);
-    if (ci < n - 1 && used > 0 && used + h > limit) { ci++; used = 0; }
-    if (used > 0) { cols[ci].push({ h: blockGap, draw: () => {} }); used += blockGap; }
-    cols[ci].push(...u);
-    used += height(u);
-  }
-  return cols;
+  return pack(hi).cols;
 }
 
 const colHeight = col => col.reduce((a, r) => a + r.h, 0);
@@ -511,9 +593,7 @@ function paintPoster(ctx, PW, PH) {
   ctx.textAlign = 'center';
   setFont(ctx, { size: PW * 0.0100, style: 'italic' });
   ctx.fillStyle = INK.faint; ctx.globalAlpha = 1;
-  const sources = 'Climate normals: ECMWF ERA5 via Open-Meteo · Vegetation: NASA MODIS MOD13Q1 '
-    + '· Air quality: Copernicus CAMS · Geocoding: OpenStreetMap Nominatim';
-  ctx.fillText(sources, cx, footTop + PW * 0.0125);
+  ctx.fillText(sourceCredits(), cx, footTop + PW * 0.0125);
   rule(ctx, M, PW - M, footTop, PW, 0.7);
 
   setFont(ctx, { size: PW * 0.0095, family: 'Cinzel' });

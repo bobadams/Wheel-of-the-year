@@ -10,19 +10,21 @@ import { R } from '../draw/theme.js';
  *
  * `source` is the provenance shown in the printed key; the live per-ring badge
  * in the control panel still comes from currentData.meta, which knows whether a
- * given ring was actually fetched or fell back to a proxy.
+ * given ring was actually fetched or fell back to a proxy. `credit` is the
+ * fuller wording for the poster's footer, which names only the upstreams the
+ * sheet actually drew from — a ring nobody switched on credits nobody.
  */
 export const RING_DEFS = [
-  { id: 'temp',       label: 'Temperature',  unit: '°F',    color: '#a8432f', normLo: 32,  normHi: 100, defaultNormMode: 'fixed',      source: 'ERA5 1991–2020' },
-  { id: 'rain',       label: 'Rainfall',     unit: 'in',    color: '#2d5f8a', normLo: 0,   normHi: 10,  defaultNormMode: 'minmax',     source: 'ERA5 1991–2020', blankZero: true },
+  { id: 'temp',       label: 'Temperature',  unit: '°F',    color: '#a8432f', normLo: 32,  normHi: 100, defaultNormMode: 'fixed',      source: 'ERA5 1991–2020', credit: 'Climate normals: ECMWF ERA5 via Open-Meteo' },
+  { id: 'rain',       label: 'Rainfall',     unit: 'in',    color: '#2d5f8a', normLo: 0,   normHi: 10,  defaultNormMode: 'minmax',     source: 'ERA5 1991–2020', credit: 'Climate normals: ECMWF ERA5 via Open-Meteo', blankZero: true },
   { id: 'daylight',   label: 'Daylight',     unit: 'hrs',   color: '#bd8b24', normLo: 7,   normHi: 18,  defaultNormMode: 'fixed',      source: 'astronomical' },
-  { id: 'evi',        label: 'Vegetation',   unit: 'EVI',   color: '#4a7c3f', normLo: .02, normHi: .65, defaultNormMode: 'minmax',     source: 'MODIS EVI 2013–2022' },
-  { id: 'wind',       label: 'Wind',         unit: 'mph',   color: '#6e7f85', normLo: 3,   normHi: 16,  defaultNormMode: 'percentile', source: 'ERA5 1991–2020' },
-  { id: 'pm25',       label: 'Air Quality',  unit: 'µg/m³', color: '#7d5680', normLo: 0,   normHi: 35,  defaultNormMode: 'percentile', source: 'CAMS 2014–2023', defaultVisible: false },
-  { id: 'visibility', label: 'Visibility',   unit: 'mi',    color: '#5f97b8', normLo: 2,   normHi: 10,  defaultNormMode: 'percentile', source: 'ERA5 2010–2020', defaultVisible: false },
-  { id: 'snow',       label: 'Snow Depth',   unit: 'in',    color: '#7fa8bf', normLo: 0,   normHi: 36,  defaultNormMode: 'minmax',     source: 'ERA5 1991–2020', blankZero: true, defaultVisible: false },
-  { id: 'cloud',      label: 'Cloud Cover',  unit: '%',     color: '#8c9498', normLo: 0,   normHi: 100, defaultNormMode: 'fixed',      source: 'ERA5 1991–2020', defaultVisible: false },
-  { id: 'dewpoint',   label: 'Humidity',     unit: '°F dp', color: '#5f8f7a', normLo: 20,  normHi: 75,  defaultNormMode: 'fixed',      source: 'ERA5 2010–2020', defaultVisible: false },
+  { id: 'evi',        label: 'Vegetation',   unit: 'EVI',   color: '#4a7c3f', normLo: .02, normHi: .65, defaultNormMode: 'minmax',     source: 'MODIS EVI 2013–2022', credit: 'Vegetation: NASA MODIS MOD13Q1' },
+  { id: 'wind',       label: 'Wind',         unit: 'mph',   color: '#6e7f85', normLo: 3,   normHi: 16,  defaultNormMode: 'percentile', source: 'ERA5 1991–2020', credit: 'Climate normals: ECMWF ERA5 via Open-Meteo' },
+  { id: 'pm25',       label: 'Air Quality',  unit: 'µg/m³', color: '#7d5680', normLo: 0,   normHi: 35,  defaultNormMode: 'percentile', source: 'CAMS 2014–2023', credit: 'Air quality: Copernicus CAMS', defaultVisible: false },
+  { id: 'visibility', label: 'Visibility',   unit: 'mi',    color: '#5f97b8', normLo: 2,   normHi: 10,  defaultNormMode: 'percentile', source: 'ERA5 2010–2020', credit: 'Climate normals: ECMWF ERA5 via Open-Meteo', defaultVisible: false },
+  { id: 'snow',       label: 'Snow Depth',   unit: 'in',    color: '#7fa8bf', normLo: 0,   normHi: 36,  defaultNormMode: 'minmax',     source: 'ERA5 1991–2020', credit: 'Climate normals: ECMWF ERA5 via Open-Meteo', blankZero: true, defaultVisible: false },
+  { id: 'cloud',      label: 'Cloud Cover',  unit: '%',     color: '#8c9498', normLo: 0,   normHi: 100, defaultNormMode: 'fixed',      source: 'ERA5 1991–2020', credit: 'Climate normals: ECMWF ERA5 via Open-Meteo', defaultVisible: false },
+  { id: 'dewpoint',   label: 'Humidity',     unit: '°F dp', color: '#5f8f7a', normLo: 20,  normHi: 75,  defaultNormMode: 'fixed',      source: 'ERA5 2010–2020', credit: 'Climate normals: ECMWF ERA5 via Open-Meteo', defaultVisible: false },
   // Categorical: no value per day, so it is drawn by draw/seasons.js rather
   // than drawRing(), and the modules that assume a numeric series (extreme
   // markers, normalization, the tooltip's per-day readout) skip it. It still

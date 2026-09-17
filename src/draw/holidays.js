@@ -10,7 +10,7 @@
 
 import { canvas, displayState } from '../state.js';
 import { doy2angle, polar, uprightTangent } from './canvas.js';
-import { R, haloText } from './theme.js';
+import { R, haloText, hairline } from './theme.js';
 import { monthDayToDOY } from '../data/calendar.js';
 
 const TRAD_STATE_KEY = {
@@ -444,6 +444,42 @@ export function drawHolidays() {
   // Sort by angle so the greedy pass processes labels in wheel order.
   items.sort((a, b) => a.a - b.a);
 
+  // Symbols that would print on top of each other — two traditions keeping the
+  // same day, like Ostara and Eid al-Fitr — are spread along the arc until they
+  // read as two marks. At this radius one symbol's width is about a day and a
+  // half, and the label's leader still lands on the symbol it names, so the
+  // spread costs a little date precision and buys both symbols back.
+  //
+  // The run is unwrapped from the largest gap rather than from DOY 0: the
+  // densest cluster of the year sits either side of the winter solstice, which
+  // is exactly where a sort by angle puts its two ends.
+  const MIN_SEP = (SYM_R * 2.05) / R_MARK;
+  if (items.length > 1) {
+    const TAU = Math.PI * 2;
+    let start = 0, widest = -1;
+    items.forEach((it, i) => {
+      const prev = items[(i - 1 + items.length) % items.length];
+      const gap = (it.a - prev.a + TAU) % TAU;
+      if (gap > widest) { widest = gap; start = i; }
+    });
+    const run = items.slice(start).concat(items.slice(0, start));
+    run.forEach((it, i) => {
+      it.symA = i === 0 ? it.a : run[i - 1].symA + ((it.a - run[i - 1].symA + TAU) % TAU);
+    });
+    for (let i = 0; i < run.length;) {
+      let j = i + 1;
+      while (j < run.length && run[j].symA - run[j - 1].symA < MIN_SEP) j++;
+      const n = j - i;
+      if (n > 1) {
+        const mid = (run[i].symA + run[j - 1].symA) / 2;
+        for (let k = 0; k < n; k++) run[i + k].symA = mid + (k - (n - 1) / 2) * MIN_SEP;
+      }
+      i = j;
+    }
+  } else if (items.length) {
+    items[0].symA = items[0].a;
+  }
+
   // Two labels collide when they overlap both tangentially (arc-length) and radially.
   function collides(a, b) {
     let dAngle = Math.abs(a.a - b.a);
@@ -469,10 +505,26 @@ export function drawHolidays() {
 
   // Draw symbols first (no label radius needed).
   for (const h of items) {
-    const [sx, sy] = polar(CX, CY, h.a, R_MARK);
+    const [sx, sy] = polar(CX, CY, h.symA, R_MARK);
     ctx.globalAlpha = 0.82;
     drawSymbol(ctx, h.trad, sx, sy, SYM_R);
   }
+
+  // A label that has moved off the innermost level, or whose symbol was spread
+  // off its own bearing, gets a leader joining the two. Feasts cluster — Easter
+  // drags Good Friday, Palm Sunday and Passover into the same fortnight — and a
+  // stack of four names beside four symbols says nothing about which is which.
+  ctx.save();
+  ctx.lineWidth = hairline(W, 0.0009, 0.5);
+  ctx.globalAlpha = 0.34;
+  for (const h of items) {
+    if (h.labelR <= CANDIDATES[0] && h.symA === h.a) continue;
+    const [x1, y1] = polar(CX, CY, h.symA, R_MARK + SYM_R * 1.35);
+    const [x2, y2] = polar(CX, CY, h.a, h.labelR - FONT_SIZE * 0.62);
+    ctx.strokeStyle = TRAD_COLORS[h.trad];
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  ctx.restore();
 
   // Draw labels at their resolved radii, upright everywhere on the wheel.
   for (const h of items) {

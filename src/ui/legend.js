@@ -3,6 +3,7 @@ import { RING_LABELS } from '../data/ringDefs.js';
 import { ringState, displayState, currentData, seasons } from '../state.js';
 import { seasonRangeLabel } from '../data/seasons.js';
 import { computeNormBounds } from '../draw/normalize.js';
+import { hasSeries } from '../data/locationCache.js';
 import { INK } from '../draw/theme.js';
 
 /**
@@ -39,10 +40,20 @@ export function rebuildLegend() {
       return;
     }
     const color = ringState[r.id].color;
-    const b = bounds[r.id] ?? { lo: r.normLo, hi: r.normHi };
-    const fmt = RING_LABELS[r.id]?.fmt ?? (v => `${v}`);
     const d = document.createElement('div');
     d.className = 'legend-item';
+    // A ring this location has no series for says so, rather than showing the
+    // fallback scale and the source that would have supplied it — the same
+    // claim the poster's key used to print under an empty lane.
+    if (!hasSeries(currentData[r.id])) {
+      d.title = 'No data for this location';
+      d.innerHTML = `<div class="legend-swatch" style="background:${color};opacity:.35"></div>`
+        + `${r.label} <span class="legend-range">no data</span>`;
+      el.appendChild(d);
+      return;
+    }
+    const b = bounds[r.id] ?? { lo: r.normLo, hi: r.normHi };
+    const fmt = RING_LABELS[r.id]?.fmt ?? (v => `${v}`);
     d.title = currentData.meta?.[r.id]?.source ?? r.source;
     d.innerHTML = `<div class="legend-swatch" style="background:${color}"></div>`
       + `${r.label} <span class="legend-range">${fmt(b.lo)} – ${fmt(b.hi)}</span>`;

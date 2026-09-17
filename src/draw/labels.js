@@ -79,18 +79,31 @@ export function drawMinMaxMarkers(layouts, normBounds) {
   });
 
   // ── Pass 2: separate labels that would print on top of each other ─────────
-  const clash = (a, b) => {
+  const arcGap = (a, b, r) => {
     let d = Math.abs(a.angle - b.angle);
     if (d > Math.PI) d = Math.PI * 2 - d;
-    return d * Math.min(a.textR, b.textR) < (a.textW + b.textW) / 2 + W * 0.004
-        && Math.abs(a.textR - b.textR) < half * 2;
+    return d * r;
   };
+  const clash = (a, b) =>
+    arcGap(a, b, Math.min(a.textR, b.textR)) < (a.textW + b.textW) / 2 + W * 0.004
+    && Math.abs(a.textR - b.textR) < half * 2;
+
+  // A label also has to clear every *marker*, not just every other label. The
+  // two are placed independently: a marker sits on its own ring's edge while a
+  // label is pushed outward from a ring further in, and the two lanes meet. A
+  // year whose calmest wind and sparsest vegetation fall in the same week
+  // printed the wind marker squarely on the word "EVI".
+  const hitsDot = (m, d) => d !== m
+    && arcGap(m, d, Math.min(m.textR, d.peakR)) < m.textW / 2 + dotR + W * 0.003
+    && Math.abs(m.textR - d.peakR) < half + dotR;
+
   const settled = [];
   // Innermost first, so a shifted label is always pushed into space that has
   // not been claimed yet.
   marks.sort((a, b) => a.peakR - b.peakR);
   for (const m of marks) {
-    for (let n = 0; n < 4 && settled.some(p => clash(m, p)); n++) {
+    for (let n = 0; n < 4; n++) {
+      if (!settled.some(p => clash(m, p)) && !marks.some(d => hitsDot(m, d))) break;
       m.textR += m.out * half * 2.1;
     }
     settled.push(m);

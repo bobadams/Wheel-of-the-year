@@ -262,7 +262,7 @@ difference in sheet size, not in how far away the reader is standing.
 ### The radial registers live in one place
 
 `R` in `src/draw/theme.js` holds every radius the wheel uses, outward from the
-centre hole to the outermost holiday label at ~0.496·W. They are in one table
+centre hole to the outermost holiday label at ~0.494·W. They are in one table
 because the constraint that matters is between them: the annotation bands are
 packed close enough that moving one without looking at its neighbours silently
 overlaps them. Nothing is drawn outside the holidays, so the table is scaled to
@@ -271,6 +271,15 @@ not leave an empty margin.
 
 Reading outward: centre cartouche · data rings · solstice/equinox labels ·
 calendar band · moon lane · holiday symbols and labels.
+
+Two of these lanes carry a half-height as well as a centre (`moonDot`,
+`holidaySym`), and the clearance between them is the difference of the centres
+**less the sum of the halves** — read as centres alone they look 0.012 apart
+while their marks overlap, which is how a full moon on a feast day printed one
+symbol on top of the other. `holidayLabel` has the same trap from below:
+`drawHolidays()` silently drops any candidate radius that would sit closer than
+half a label to the symbols, so a too-tight innermost level does not overlap —
+it just disappears, and `holidayLevels: 4` quietly becomes three.
 
 ### Tracking has to be drawn, not spaced
 
@@ -286,6 +295,14 @@ export either.
 `haloText()` strokes the glyph in the paper colour before filling it. That is how
 an extreme label, a season label or a holiday name stays legible where it crosses
 a ring fill without a box around it. Anything drawn over the rings should use it.
+
+A halo only breaks what was drawn **before** it, which is why `paintWheel()` puts
+the solstice cross down ahead of the annotation rather than last, and why the
+seasons band paints its bodies with the rings but its names in the annotation
+pass (`drawSeasonBand` / `drawSeasonLabels`). The one thing a halo cannot cover
+is the gap between the glyphs of letterspaced arc text — the cross would show
+through "WINTER SOLSTICE" whatever the order — so `drawAxes()` draws each arm in
+two segments with that lane left out.
 
 ## Seasons are derived, never assumed
 
@@ -445,9 +462,20 @@ Four things about it are load-bearing:
 - **The key is laid out before the wheel.** Its four columns are measured, the
   lead paragraph is wrapped, and the wheel is then given whatever height is left
   — which is why the wheel grows when rings are switched off.
-- **A block is the unit of column packing.** Splitting one puts its heading in a
-  different column from half its entries; only a block too tall for any column is
-  broken up.
+- **A row is the unit of column packing, and a split block says so.** Rows are
+  bound into atomic units first — a heading to the entry under it, a closing note
+  to the entry above it — and a block that runs past the foot of a column
+  continues in the next one under its own name ("The rings, cont."). Packing
+  whole blocks instead looks tidier and costs the wheel dearly: with ten rings
+  switched on, the ring list took a column to itself, left the fourth column
+  empty, and squeezed the wheel to a third of the sheet.
+- **The key prints what the sheet actually measured.** A ring switched on for a
+  place with no such series is left out of the key (and marked "no data" in the
+  on-screen legend), because its range would be the fallback scale from
+  `ringDefs.js` and its source the upstream that was never asked. For the same
+  reason a fixed or percentile range is labelled `scale`: only a `minmax` ring's
+  range is also the year's own high and low. The footer credits only the
+  upstreams the visible rings came from.
 
 ### Two canvas2svg bugs the export patches
 

@@ -37,7 +37,6 @@ export function drawSeasonBand(seasons, innerR, thick, alpha = 1) {
   if (!seasons?.length) return;
   const { ctx, W, CX, CY } = canvas;
   const outerR = innerR + thick;
-  const midR   = innerR + thick / 2;
 
   ctx.save();
 
@@ -74,6 +73,23 @@ export function drawSeasonBand(seasons, innerR, thick, alpha = 1) {
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
   });
 
+  ctx.restore();
+}
+
+/**
+ * The seasons' names, drawn in the annotation pass rather than with the band.
+ *
+ * They are the band's own labels, but they are still labels: drawn with the
+ * bodies they went down before the solstice cross, which then ruled straight
+ * through "OCT 26 – FEB 14". Drawn here, after it, their halos break it the way
+ * every other label on the wheel does.
+ */
+export function drawSeasonLabels(seasons, innerR, thick, alpha = 1) {
+  if (!seasons?.length) return;
+  const { ctx, W, CX, CY } = canvas;
+  const midR = innerR + thick / 2;
+
+  ctx.save();
   // ── Names ─────────────────────────────────────────────────────────────────
   // Set in the band itself rather than outside it, which keeps the seasons
   // clear of the solstice/equinox lane the wheel already spends at R.seasonLabel.
@@ -119,6 +135,7 @@ export function drawSeasonBand(seasons, innerR, thick, alpha = 1) {
     drawArcText(ctx, CX, CY, dates, aMid, midR - size * 0.72,
       { tracking: dSize * 0.1, paint: (c, ch, x, y) => haloText(c, ch, x, y, dSize * 0.5) });
   });
+
 
   ctx.restore();
 }

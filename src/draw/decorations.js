@@ -161,19 +161,26 @@ const CARDINALS = [
 export function drawAxes() {
   const { ctx, W, CX, CY } = canvas;
   const outer = W * R.axisOuter;
+  const size  = W * 0.0118;          // the label, and so the gap left for it
   ctx.save();
   ctx.strokeStyle = INK.ink; ctx.lineWidth = hairline(W, 0.0011, 0.6);
   ctx.globalAlpha = .26; ctx.setLineDash([W * 0.006, W * 0.007]);
+  // The line stops short of its own label and picks up beyond it. A halo can't
+  // do that job here: the label is letterspaced arc text, so the line simply
+  // showed through the gaps between its glyphs.
+  const gapLo  = W * R.seasonLabel - size * 0.95;
+  const gapHi  = W * R.seasonLabel + size * 0.95;
   CARDINALS.forEach(({ doy }) => {
     const a = doy2angle(doy);
-    const [x1, y1] = polar(CX, CY, a, W * R.holeOuter);
-    const [x2, y2] = polar(CX, CY, a, outer);
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    [[W * R.holeOuter, gapLo], [gapHi, outer]].forEach(([r1, r2]) => {
+      const [x1, y1] = polar(CX, CY, a, r1);
+      const [x2, y2] = polar(CX, CY, a, r2);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    });
   });
   ctx.setLineDash([]);
   ctx.restore();
 
-  const size = W * 0.0118;
   ctx.save();
   ctx.font = `${size}px Cinzel,serif`;
   ctx.fillStyle = INK.light;

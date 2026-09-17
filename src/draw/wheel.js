@@ -3,7 +3,7 @@ import { canvas, ringOrder, ringState, displayState, currentData, smoothedData, 
 import { computeRingLayouts } from './layout.js';
 import { computeNormBounds } from './normalize.js';
 import { drawRing } from './ring.js';
-import { drawSeasonBand } from './seasons.js';
+import { drawSeasonBand, drawSeasonLabels } from './seasons.js';
 import { drawMoon, drawTicks, drawAxes, drawCenter } from './decorations.js';
 import { drawHolidays } from './holidays.js';
 import { drawMinMaxMarkers } from './labels.js';
@@ -26,6 +26,10 @@ export function paintWheel(opts = {}) {
   const layouts = computeRingLayouts();
   const normBounds = computeNormBounds(currentData);
 
+  // The seasons band paints its bodies with the rings and its names with the
+  // annotation, so the slot it landed in is kept for that second pass.
+  let seasonSlot = null;
+
   ringOrder.forEach(id => {
     const s = ringState[id];
     if (!s.visible || !layouts[id]) return;
@@ -33,7 +37,8 @@ export function paintWheel(opts = {}) {
     const { innerFrac, thickFrac } = layouts[id];
     // A categorical ring has no per-day value to normalize, so it paints itself.
     if (r.categorical) {
-      drawSeasonBand(seasons.seasons, innerFrac * canvas.W, thickFrac * canvas.W, s.opacity);
+      seasonSlot = [innerFrac * canvas.W, thickFrac * canvas.W, s.opacity];
+      drawSeasonBand(seasons.seasons, ...seasonSlot);
       return;
     }
     const ringData = s.smooth && smoothedData[id] ? smoothedData[id] : currentData[id];
@@ -49,11 +54,16 @@ export function paintWheel(opts = {}) {
     drawTodayDot(layouts, normBounds);
   }
 
+  // The solstice cross goes down before the annotation, not after it: it is a
+  // structural line rather than a mark to be read, and drawn last it ruled
+  // straight through month names and extreme labels alike. Underneath, every
+  // halo above it breaks it cleanly.
+  if (displayState.axis)      drawAxes();
+  if (seasonSlot)             drawSeasonLabels(seasons.seasons, ...seasonSlot);
   drawMinMaxMarkers(layouts, normBounds);
   if (displayState.windBarbs) drawWindBarbs(layouts);
   if (displayState.ticks)     drawTicks();
   if (displayState.moon)      drawMoon();
-  if (displayState.axis)      drawAxes();
   if (displayState.holidays)  drawHolidays();
   drawCenter(opts.center);
 }
